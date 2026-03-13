@@ -1,6 +1,7 @@
 """
 main.py - Orchestrator for ChibiCam.
 """
+from cv2.gapi.core import cpu
 import argparse
 import sys
 import time
@@ -28,6 +29,7 @@ def parse_arguments():
     parser.add_argument("--debug", "-d", action="store_true")
     parser.add_argument("--fullscreen", "-f", action="store_true")
     parser.add_argument("--webview", "-w", action="store_true")
+    parser.add_argument("--gpu", "-g", action="store_true", help="Force CUDA GPU acceleration (use when PyTorch CUDA is installed system-wide)")
     return parser.parse_args()
 
 def select_camera():
@@ -49,7 +51,29 @@ async def async_main(args=None):
     print("\n[1] MediaPipe (Detailed) | [2] YOLOv8m (Fast)")
     tracker_type = "mediapipe" if input("Select tracker [1]: ") != "2" else "yolo"
     
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # GPU / CPU Selection
+    cuda_available = torch.cuda.is_available()
+    if args.gpu:
+        device = "cuda"
+        print(f"[ChibiCam] GPU mode forced via --gpu flag")
+        if cuda_available:
+            print(f"[ChibiCam] CUDA device: {torch.cuda.get_device_name(0)}")
+        else:
+            print(f"[ChibiCam] WARNING: torch.cuda.is_available() returned False.")
+            print(f"[ChibiCam] Attempting CUDA anyway (system-wide PyTorch CUDA).")
+    elif cuda_available:
+        print(f"\n[ChibiCam] GPU detected: {torch.cuda.get_device_name(0)}")
+        print("[1] GPU (CUDA) | [2] CPU")
+        gpu_choice = input("Select device [1]: ").strip()
+        device = "cpu" if gpu_choice == "2" else "cuda"
+    else:
+        print("\n[ChibiCam] No CUDA GPU detected. Running on CPU.")
+        print("[ChibiCam] TIP: Use --gpu flag if PyTorch CUDA is installed system-wide.")
+        device = "cpu"
+    
+    print(f"[ChibiCam] Using device: {device.upper()}")
+    manager.settings["device"] = device
+    
     if args.camera is None: args.camera = select_camera()
     
     # 2. Init Hardware/Modules
@@ -58,7 +82,7 @@ async def async_main(args=None):
     camera.start()
     
     if tracker_type == "mediapipe":
-        tracker = MediaPipeTracker(model_complexity=1, enable_segmentation=True)
+        tracker = MediaPipeTracker(device=cpu)
     else:
         tracker = PoseTracker(confidence=0.5, device=device)
     
@@ -66,8 +90,14 @@ async def async_main(args=None):
     filter_engine = FilterEngine()
     ribbon = RibbonEffect() # <--- INITIALIZED HERE
     
+    # Stylization caching for frame skipping
+    last_stylized_frame = None
+    stylize_skip_count = 0
+    STYLIZE_SKIP_RATE = 2  # Process every Nth frame if neural style is active
+    
     display = ScreenManager(window_name="ChibiCam", show_debug=args.debug, fullscreen=args.fullscreen)
     display.set_model_name("MediaPipe" if tracker_type == "mediapipe" else "YOLOv8m")
+    display.set_device(device)
     
     # Map view mode
     mode_map = {
@@ -94,27 +124,51 @@ async def async_main(args=None):
 
             # Settings from Frontend
             is_wireframe = (display.view_mode == ViewMode.WIREFRAME_ONLY) or (manager.settings.get("view_mode") == "wireframe")
-            is_matrix = (display.view_mode == ViewMode.MATRIX_ONLY) or (manager.settings.get("view_mode") == "matrix")
-            is_glitch = (display.view_mode == ViewMode.GLITCH_ONLY) or (manager.settings.get("view_mode") == "glitch")
-            is_terminal = (display.view_mode == ViewMode.TERMINAL_ONLY) or (manager.settings.get("view_mode") == "terminal")
-            is_hologram = (display.view_mode == ViewMode.HOLOGRAM_ONLY) or (manager.settings.get("view_mode") == "hologram")
-            is_dot_field = (display.view_mode == ViewMode.DOT_FIELD_ONLY) or (manager.settings.get("view_mode") == "dot_field")
+            is_matrix = (display.view_mode == ViewMode.MATRIX_ONLY)
+            is_glitch = (display.view_mode == ViewMode.GLITCH_ONLY)
+            is_terminal = (display.view_mode == ViewMode.TERMINAL_ONLY)
+            is_hologram = (display.view_mode == ViewMode.HOLOGRAM_ONLY)
+            is_dot_field = (display.view_mode == ViewMode.DOT_FIELD_ONLY)
+            
+            # Handle filter selection (only applies to webcam mode)
+            current_filter = manager.settings.get("currentFilter", "none")
+            is_glitch_filter = current_filter == "glitch"
+            is_dot_field_filter = current_filter == "dot_field"
+            is_matrix_filter = current_filter == "matrix"
+            is_terminal_filter = current_filter == "terminal"
+            
+            # Handle pookie mode (applies to all modes)
+            pookie_mode = manager.settings.get("pookieMode", False)
+            
             needs_vis = is_wireframe or is_matrix or is_glitch or is_terminal or is_hologram or is_dot_field or display.show_debug or manager.settings.get("show_wireframe", False)
             
             # TRACKING
+            t0 = time.time()
             tracking_data, tracking_vis = tracker.process_frame(
                 frame, 
                 return_visualization=needs_vis,
                 black_background=is_wireframe
             )
+            display.update_timing("Tracking", time.time() - t0)
 
             # STYLIZATION
             apply_stylize = manager.settings.get("apply_stylize", False)
-            stylize_mode = manager.settings.get("stylize_mode", "face")
+            stylize_mode = manager.settings.get("stylize_mode", "anime_cv")
             
             stylized_frame = frame.copy()
             
-            # Auto-apply Matrix effect when in Matrix view mode
+            # Apply filters when in webcam mode
+            if display.view_mode == ViewMode.WEBCAM_ONLY:
+                if is_glitch_filter:
+                    stylized_frame = filter_engine.apply_glitch_filter(frame, tracking_data)
+                elif is_dot_field_filter:
+                    stylized_frame = filter_engine.apply_dot_field_filter(frame, tracking_data)
+                elif is_matrix_filter:
+                    stylized_frame = filter_engine.apply_matrix_filter(frame, tracking_data)
+                elif is_terminal_filter:
+                    stylized_frame = filter_engine.apply_terminal_filter(frame, tracking_data)
+            
+            # Apply view mode specific effects
             if is_matrix:
                 stylized_frame = filter_engine.apply_matrix_filter(frame, tracking_data)
             elif is_glitch:
@@ -135,26 +189,41 @@ async def async_main(args=None):
                     elif isinstance(tracking_data, list) and len(tracking_data) > 0:
                         first_person = tracking_data[0]
                     
-                    if stylize_mode == "anime_cv":
-                        stylized_frame = filter_engine.apply_anime_filter(frame)
-                    elif stylize_mode == "chibi_cv":
+                    if stylize_mode == "chibi_cv":
                         stylized_frame = filter_engine.apply_chibi_filter(frame, first_person)
-                    elif stylize_mode == "matrix_cv":
-                        stylized_frame = filter_engine.apply_matrix_filter(frame, tracking_data)
+                    elif stylize_mode == "anime_cv":
+                        stylized_frame = filter_engine.apply_anime_filter(frame, first_person)
+                    elif stylize_mode == "ghibli_cv":
+                        stylized_frame = filter_engine.apply_ghibli_filter(frame, first_person)
+                    elif stylize_mode == "watercolor_cv":
+                        stylized_frame = filter_engine.apply_watercolor_filter(frame, first_person)
                 else:
                     # PyTorch Neural Models
                     if generator is None or getattr(generator, 'model_type', None) != stylize_mode:
                         if generator: generator.close()
                         generator = ArtGenerator(model_path=None, input_size=(512,512), device=device, model_type=stylize_mode)
-                    stylized_frame = generator.generate_with_compositing(frame, tracking_data)
-            elif is_wireframe:
+                    
+                    # Frame skipping logic for heavy neural styles
+                    if last_stylized_frame is None or stylize_skip_count >= STYLIZE_SKIP_RATE:
+                        stylized_frame = generator.generate_with_compositing(frame, tracking_data)
+                        last_stylized_frame = stylized_frame.copy()
+                        stylize_skip_count = 0
+                    else:
+                        stylize_skip_count += 1
+                        # .copy() is required here so the ribbon doesn't permanently draw on the cached frame!
+                        stylized_frame = last_stylized_frame.copy() 
+            
+            # Handle wireframe overlay
+            if is_wireframe:
                 stylized_frame = tracking_vis if tracking_vis is not None else np.zeros_like(frame)
-
+            
             # GLOBAL OVERLAYS (Must happen BEFORE display.render)
-            # This ensures the ribbon is always visible on top of the Arch Linux/Matrix void
-            stylized_frame = ribbon.draw(stylized_frame, tracking_data)
-
-            frame = ribbon.draw(frame, tracking_data)
+            # This ensures the ribbon is always visible on top of any effect
+            if pookie_mode:
+                if stylized_frame is not None:
+                    stylized_frame = ribbon.draw(stylized_frame, tracking_data)
+                if frame is not None:
+                    frame = ribbon.draw(frame, tracking_data)
 
             # Metrics and Networking
             fps = int(1.0 / (time.time() - t_start)) if (time.time() - t_start) > 0 else 0
@@ -171,8 +240,8 @@ async def async_main(args=None):
                 break
             
             # HANDLE INPUT EVENTS (Processed after render for the next frame)
-            if hasattr(display, '_last_key_result') and display._last_key_result == 'toggle_ribbon':
-                ribbon.toggle()
+            # Note: Ribbon is now controlled by frontend pookie_mode setting
+            if hasattr(display, '_last_key_result') and display._last_key_result:
                 display._last_key_result = None
 
             await asyncio.sleep(0.001)

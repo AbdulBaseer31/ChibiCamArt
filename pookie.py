@@ -3,7 +3,7 @@ import numpy as np
 
 class RibbonEffect:
     def __init__(self):
-        self.enabled = True
+        self.enabled = False
         # Base Cute Pink (BGR)
         self.color = (180, 105, 255) 
 
