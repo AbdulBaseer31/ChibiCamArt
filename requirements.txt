@@ -1,0 +1,33 @@
+# ChibiCam - Real-time Interactive Art Installation
+# Python Dependencies
+
+# Core ML/CV Libraries
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+
+# Computer Vision / Pose Estimation / AI Stylization
+mediapipe>=0.10.0
+ultralytics>=8.0.0
+diffusers>=0.20.0
+transformers>=4.30.0
+accelerate>=0.20.0
+safetensors>=0.3.0
+onnxruntime>=1.15.0
+
+# Web / Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+
+# Windows Specific / OS Utility
+wmi>=1.5.1
+pywin32>=306
+psutil>=5.9.0
+
+# Visualization / Tooling
+matplotlib>=3.7.0
+Pillow>=10.0.0
