@@ -4,9 +4,10 @@ import { Switch } from './ui/switch'
 import { Label } from './ui/label'
 import { Slider } from './ui/slider'
 import { Button } from './ui/button'
-import { Video, Settings2, Activity, Play, Square, ChevronLeft } from 'lucide-react'
+import { Video, Settings2, Activity, Play, Square, ChevronLeft, Cpu, Zap } from 'lucide-react'
 
-type Mode = 'webcam' | 'wireframe' | 'matrix' | 'glitch' | 'terminal' | 'hologram' | 'dot_field'
+type Mode = 'webcam' | 'wireframe' | 'hologram'
+type Filter = 'none' | 'glitch' | 'dot_field' | 'matrix' | 'terminal'
 
 interface DashboardProps {
   initialMode?: Mode;
@@ -17,10 +18,11 @@ export function Dashboard({ initialMode = 'webcam', onBack }: DashboardProps) {
   const [isRunning, setIsRunning] = useState(false)
   const [confidence, setConfidence] = useState([50])
   const [useFullModel, setUseFullModel] = useState(false)
+  const [useGpu, setUseGpu] = useState(false)
   const [showWireframe, setShowWireframe] = useState(initialMode === 'wireframe')
-  const [applyStylize, setApplyStylize] = useState(false)
-  const [stylizeMode, setStylizeMode] = useState<'face' | 'full' | 'anime_cv' | 'ghibli_cv' | 'watercolor_cv'>('anime_cv')
+  const [pookieMode, setPookieMode] = useState(false)
   const [currentViewMode, setCurrentViewMode] = useState<Mode>(initialMode)
+  const [currentFilter, setCurrentFilter] = useState<Filter>('none')
 
   // WebSocket State
   const [frameData, setFrameData] = useState<string | null>(null)
@@ -43,8 +45,9 @@ export function Dashboard({ initialMode = 'webcam', onBack }: DashboardProps) {
           type: 'settings', 
           showWireframe,
           viewMode: currentViewMode,
-          applyStylize,
-          stylizeMode
+          currentFilter,
+          pookieMode,
+          useGpu
         }))
       }
 
@@ -98,11 +101,12 @@ export function Dashboard({ initialMode = 'webcam', onBack }: DashboardProps) {
         type: 'settings', 
         showWireframe,
         viewMode: currentViewMode,
-        applyStylize,
-        stylizeMode
+        currentFilter,
+        pookieMode,
+        useGpu
       }))
     }
-  }, [showWireframe, initialMode, applyStylize, stylizeMode])
+  }, [showWireframe, currentViewMode, currentFilter, pookieMode, useGpu])
 
   return (
     <div className="container mx-auto p-4 min-h-screen flex flex-col gap-6">
@@ -195,104 +199,105 @@ export function Dashboard({ initialMode = 'webcam', onBack }: DashboardProps) {
                   onCheckedChange={setUseFullModel}
                 />
               </div>
-              
+
               <div className="flex items-center justify-between">
-                <Label htmlFor="wireframe-toggle" className="flex flex-col gap-1 cursor-pointer">
-                  <span>Draw Wireframe</span>
-                  <span className="font-normal text-xs text-muted-foreground">Overlay skeletal pose data</span>
+                <Label htmlFor="gpu-toggle" className="flex flex-col gap-1 cursor-pointer">
+                  <span className="flex items-center gap-1.5">
+                    {useGpu ? <Zap className="w-4 h-4 text-amber-400" /> : <Cpu className="w-4 h-4 text-muted-foreground" />}
+                    GPU Acceleration
+                  </span>
+                  <span className="font-normal text-xs text-muted-foreground">
+                    {useGpu ? 'CUDA GPU active — faster inference' : 'Running on CPU'}
+                  </span>
                 </Label>
                 <Switch 
-                  id="wireframe-toggle" 
-                  checked={showWireframe}
-                  onCheckedChange={setShowWireframe}
+                  id="gpu-toggle" 
+                  checked={useGpu}
+                  onCheckedChange={setUseGpu}
+                />
+              </div>
+              
+              {/* View Mode Selection */}
+              <div className="flex items-center justify-between">
+                <Label htmlFor="view-mode" className="flex flex-col gap-1 cursor-pointer">
+                  <span>View Mode</span>
+                  <span className="font-normal text-xs text-muted-foreground">Select main display mode</span>
+                </Label>
+                <div className="grid grid-cols-3 gap-2 text-sm">
+                  <button 
+                    className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'webcam' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                    onClick={() => {
+                      setCurrentViewMode('webcam')
+                      setCurrentFilter('none')
+                    }}
+                  >
+                    Webcam
+                  </button>
+                  <button 
+                    className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'wireframe' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                    onClick={() => {
+                      setCurrentViewMode('wireframe')
+                      setCurrentFilter('none')
+                    }}
+                  >
+                    Wireframe
+                  </button>
+                  <button 
+                    className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'hologram' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                    onClick={() => {
+                      setCurrentViewMode('hologram')
+                      setCurrentFilter('none')
+                    }}
+                  >
+                    Hologram
+                  </button>
+                </div>
+              </div>
+
+              {/* Pookie Mode Toggle */}
+              <div className="flex items-center justify-between">
+                <Label htmlFor="pookie-toggle" className="flex flex-col gap-1 cursor-pointer">
+                  <span>🎀 Pookie Mode</span>
+                  <span className="font-normal text-xs text-muted-foreground">Toggle ribbon overlay</span>
+                </Label>
+                <Switch 
+                  id="pookie-toggle" 
+                  checked={pookieMode}
+                  onCheckedChange={setPookieMode}
                 />
               </div>
 
-              <div className="flex items-center justify-between border-t border-border/50 pt-4">
-                <Label htmlFor="stylize-toggle" className="flex flex-col gap-1 cursor-pointer">
-                  <span className="text-primary font-medium">✨ Artistic Effects</span>
-                  <span className="font-normal text-xs text-muted-foreground">Select a visual style or filter</span>
-                </Label>
-                <Switch 
-                  id="stylize-toggle" 
-                  checked={applyStylize}
-                  onCheckedChange={setApplyStylize}
-                />
-              </div>
-              
-              {applyStylize && (
-                <div className="flex flex-col gap-2 border border-border/50 p-2 rounded-lg bg-muted/20">
+              {/* Filter Options - Only show in Webcam mode */}
+              {currentViewMode === 'webcam' && (
+                <div className="flex items-center justify-between border-t border-border/50 pt-4">
+                  <Label htmlFor="filter-select" className="flex flex-col gap-1 cursor-pointer">
+                    <span className="text-primary font-medium">🎨 Filter Effects</span>
+                    <span className="font-normal text-xs text-muted-foreground">Apply visual filters to webcam feed</span>
+                  </Label>
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'matrix' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('matrix')
-                      }}
-                    >
-                      Matrix
-                    </button>
-                    <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'glitch' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('glitch')
-                      }}
+                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentFilter === 'glitch' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                      onClick={() => setCurrentFilter('glitch')}
                     >
                       Glitch
                     </button>
                     <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'terminal' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('terminal')
-                      }}
-                    >
-                      Terminal
-                    </button>
-                    <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'hologram' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('hologram')
-                      }}
-                    >
-                      Hologram
-                    </button>
-                    <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentViewMode === 'dot_field' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('dot_field')
-                      }}
+                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentFilter === 'dot_field' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                      onClick={() => setCurrentFilter('dot_field')}
                     >
                       Dot Field
                     </button>
-                  </div>
-
-                  <div className="text-xs font-semibold text-muted-foreground mt-2 mb-1 uppercase tracking-wider">Fast Filters (CPU)</div>
-                  <div className="grid grid-cols-2 gap-2 text-sm">
                     <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${stylizeMode === 'anime_cv' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('webcam')
-                        setStylizeMode('anime_cv')
-                      }}
+                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentFilter === 'matrix' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                      onClick={() => setCurrentFilter('matrix')}
                     >
-                      Anime
+                      Matrix
                     </button>
                     <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${stylizeMode === 'ghibli_cv' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('webcam')
-                        setStylizeMode('ghibli_cv')
-                      }}
+                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${currentFilter === 'terminal' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
+                      onClick={() => setCurrentFilter('terminal')}
                     >
-                      Ghibli
-                    </button>
-                    <button 
-                      className={`py-1.5 px-2 rounded-md text-center transition-colors ${stylizeMode === 'watercolor_cv' ? 'bg-primary/20 text-primary font-medium border border-primary/30' : 'bg-muted/30 hover:bg-accent/50 text-muted-foreground border border-transparent'}`}
-                      onClick={() => {
-                        setCurrentViewMode('webcam')
-                        setStylizeMode('watercolor_cv')
-                      }}
-                    >
-                      Watercolor
+                      Terminal
                     </button>
                   </div>
                 </div>
@@ -329,6 +334,12 @@ export function Dashboard({ initialMode = 'webcam', onBack }: DashboardProps) {
                   <div className="flex justify-between border-b border-border/50 pb-2">
                     <span>Active Camera</span>
                     <span className="text-foreground">None</span>
+                  </div>
+                  <div className="flex justify-between border-b border-border/50 pb-2">
+                    <span>Device</span>
+                    <span className={`font-mono ${useGpu ? 'text-amber-400' : 'text-foreground'}`}>
+                      {useGpu ? '⚡ CUDA GPU' : 'CPU'}
+                    </span>
                   </div>
                   <div className="flex justify-between pb-2">
                     <span>Detected Entities</span>

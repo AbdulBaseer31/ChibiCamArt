@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
-        self.settings = {"show_wireframe": False}
+        self.settings = {"show_wireframe": False, "device": "cpu"}
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -81,15 +81,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 data = json.loads(data_str)
                 # Handle incoming commands (e.g., change settings)
                 if data.get("type") == "settings":
-                    if "showWireframe" in data:
-                        manager.settings["show_wireframe"] = data["showWireframe"]
                     if "viewMode" in data:
                         manager.settings["view_mode"] = data["viewMode"]
-                    if "applyStylize" in data:
-                        manager.settings["apply_stylize"] = data["applyStylize"]
-                    if "stylizeMode" in data:
-                        manager.settings["stylize_mode"] = data["stylizeMode"]
-                logger.info(f"Received command: {data}")
+                    if "currentFilter" in data:
+                        manager.settings["currentFilter"] = data["currentFilter"]
+                    if "pookieMode" in data:
+                        manager.settings["pookieMode"] = data["pookieMode"]
+                    if "showWireframe" in data:
+                        manager.settings["show_wireframe"] = data["showWireframe"]
+                    if "useGpu" in data:
+                        manager.settings["device"] = "cuda" if data["useGpu"] else "cpu"
+                    logger.info(f"Received command: {data}")
             except json.JSONDecodeError:
                 pass
                 

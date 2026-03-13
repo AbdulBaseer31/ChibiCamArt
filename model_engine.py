@@ -220,13 +220,18 @@ class ArtGenerator:
         """
         self.input_size = input_size
         self.use_fp16 = use_fp16
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device)
         self.model_type = model_type
         self.is_onnx = False
         self.ort_session = None
+
+        if self.device.type == "cpu" and self.use_fp16:
+            print("[ArtGenerator] WARNING: FP16 requested but device is CPU. Disabling FP16.")
+            self.use_fp16 = False
         
         if device == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError("CUDA requested but not available. Set device='cpu'.")
+            print("[ArtGenerator] WARNING: CUDA requested but torch.cuda.is_available() is False.")
+            print("[ArtGenerator] Proceeding anyway (system-wide PyTorch CUDA may work).")
         
         # Initialize model
         if self.model_type == "face":
@@ -264,7 +269,7 @@ class ArtGenerator:
         self._dummy_input = torch.zeros(
             (1, 3, input_size[1], input_size[0]),
             device=self.device,
-            dtype=torch.float16 if use_fp16 else torch.float32
+            dtype=torch.float16 if self.use_fp16 else torch.float32
         )
         
         # Warm up GPU with dummy inference

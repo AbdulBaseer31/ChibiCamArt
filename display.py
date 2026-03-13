@@ -72,6 +72,7 @@ class ScreenManager:
         self.view_mode: ViewMode = ViewMode.WIREFRAME_ONLY  # Default: single output
         self._current_fps_color = (0, 255, 0)  # Green (good)
         self.model_name: str = "unknown"  # Track which pose model is being used
+        self.device: str = "unknown"      # Track which compute device is being used
         
         print(f"[ScreenManager] Initialized: '{window_name}'")
     
@@ -145,6 +146,7 @@ class ScreenManager:
         debug_lines: List[str] = []
         
         debug_lines.append(f"Model: {self.model_name}")
+        debug_lines.append(f"Device: {self.device.upper()}")
         
         if self._frame_times:
             avg_ms = (sum(self._frame_times) / len(self._frame_times)) * 1000
@@ -174,6 +176,9 @@ class ScreenManager:
     
     def set_model_name(self, model_name: str) -> None:
         self.model_name = model_name
+    
+    def set_device(self, device: str) -> None:
+        self.device = device
     
     def set_view_mode(self, mode: ViewMode) -> None:
         self.view_mode = mode
@@ -223,9 +228,6 @@ class ScreenManager:
         elif key == ord('5'): self.set_view_mode(ViewMode.TERMINAL_ONLY)
         elif key == ord('6'): self.set_view_mode(ViewMode.HOLOGRAM_ONLY)
         elif key == ord('7'): self.set_view_mode(ViewMode.DOT_FIELD_ONLY)
-        elif key == ord('g'): 
-            self._last_key_result = 'toggle_ribbon'
-            return True
         elif key == ord('t'): self.cycle_view_mode()
         elif key == ord('f'): self._toggle_fullscreen()
         elif key == ord('d'): self.show_debug = not self.show_debug
@@ -257,7 +259,7 @@ class ScreenManager:
         instructions = [
             "Q/ESC: Quit", "1: Webcam", "2: Wireframe", "3: Matrix", 
             "4: Glitch", "5: Terminal", "6: Hologram", "7: Dot Field",
-            "G: Toggle Ribbon", "T: Cycle modes", "F: Fullscreen", 
+            "T: Cycle modes", "F: Fullscreen", 
             "D: Debug info", "SPACE: Pause"
         ]
         
