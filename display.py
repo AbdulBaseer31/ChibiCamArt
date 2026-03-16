@@ -231,6 +231,8 @@ class ScreenManager:
         elif key == ord('t'): self.cycle_view_mode()
         elif key == ord('f'): self._toggle_fullscreen()
         elif key == ord('d'): self.show_debug = not self.show_debug
+        elif key == ord('g'): 
+            self._last_key_result = 'g' # Passes the G keypress back up to main.py
         elif key == ord(' '): 
             print("[ScreenManager] Paused - press any key to continue")
             cv2.waitKey(0)
@@ -260,7 +262,7 @@ class ScreenManager:
             "Q/ESC: Quit", "1: Webcam", "2: Wireframe", "3: Matrix", 
             "4: Glitch", "5: Terminal", "6: Hologram", "7: Dot Field",
             "T: Cycle modes", "F: Fullscreen", 
-            "D: Debug info", "SPACE: Pause"
+            "D: Debug info", "G: Toggle Ribbon", "SPACE: Pause"
         ]
         
         y_start = h - 30

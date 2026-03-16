@@ -21,6 +21,7 @@ from display import ScreenManager, ViewMode
 from filters import FilterEngine
 from server import app, manager
 from pookie import RibbonEffect # <--- IMPORTED HERE
+from hologram_effect import HologramEffect # <--- IMPORTED HOLOGRAM EFFECT
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="ChibiCam")
@@ -88,7 +89,8 @@ async def async_main(args=None):
     
     generator = None
     filter_engine = FilterEngine()
-    ribbon = RibbonEffect() # <--- INITIALIZED HERE
+    ribbon = RibbonEffect() 
+    hologram_effect = HologramEffect() # <--- INITIALIZED HERE (Persists physics state)
     
     # Stylization caching for frame skipping
     last_stylized_frame = None
@@ -139,6 +141,7 @@ async def async_main(args=None):
             
             # Handle pookie mode (applies to all modes)
             pookie_mode = manager.settings.get("pookieMode", False)
+            ribbon.enabled = pookie_mode
             
             needs_vis = is_wireframe or is_matrix or is_glitch or is_terminal or is_hologram or is_dot_field or display.show_debug or manager.settings.get("show_wireframe", False)
             
@@ -176,7 +179,8 @@ async def async_main(args=None):
             elif is_terminal:
                 stylized_frame = filter_engine.apply_terminal_filter(frame, tracking_data)
             elif is_hologram:
-                stylized_frame = filter_engine.apply_hologram_filter(frame, tracking_data)
+                # <--- CALLING THE STATEFUL CLASS HERE
+                stylized_frame = hologram_effect.process_frame(frame, tracking_data) 
             elif is_dot_field:
                 stylized_frame = filter_engine.apply_dot_field_filter(frame, tracking_data)
             elif apply_stylize:
@@ -241,7 +245,15 @@ async def async_main(args=None):
             
             # HANDLE INPUT EVENTS (Processed after render for the next frame)
             # Note: Ribbon is now controlled by frontend pookie_mode setting
+            # HANDLE INPUT EVENTS
             if hasattr(display, '_last_key_result') and display._last_key_result:
+                if display._last_key_result == 'g':
+                    # Toggle pookie mode in the global settings dictionary
+                    current_state = manager.settings.get("pookieMode", False)
+                    manager.settings["pookieMode"] = not current_state
+                    print(f"[Main] Toggled Ribbon via keyboard: {not current_state}")
+                
+                # Reset key state
                 display._last_key_result = None
 
             await asyncio.sleep(0.001)
@@ -249,6 +261,7 @@ async def async_main(args=None):
     finally:
         camera.stop()
         display.close()
+        hologram_effect.close() # <--- CLEANUP CALLED HERE
         cv2.destroyAllWindows()
 
 def main():
