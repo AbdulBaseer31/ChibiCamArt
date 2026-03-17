@@ -140,35 +140,30 @@ class ScenePhysicsEngine:
             b['life'] = 0
 
         elif stype == 'Pyramid':
+            # Prevent an already transformed bullet from getting stuck in an infinite loop
             if b.get('is_refracted'):
                 return
 
-            # Destroy the incoming bullet — it does not pass through
+            # Destroy the incoming bullet
             b['life'] = 0
 
             speed = math.hypot(b['vx'], b['vy'])
             if speed < 1e-6:
                 return
 
-            base_angle = math.atan2(b['vy'], b['vx'])
+            current_scale = b.get('scale', 1.0)
 
-            # Spawn exit point on the far surface of the shape
-            exit_x = cx + math.cos(base_angle) * (r + 4)
-            exit_y = cy + math.sin(base_angle) * (r + 4)
-
-            # Two diverging beams — wider spread so it visually reads as light splitting
-            spread = math.pi / 4   # 45° total fan (±22.5°)
-            for offset in (-spread / 2, spread / 2):
-                angle = base_angle + offset
-                new_bullets.append({
-                    'x': exit_x,
-                    'y': exit_y,
-                    'vx': math.cos(angle) * speed * 0.85,
-                    'vy': math.sin(angle) * speed * 0.85,
-                    'life': 18,
-                    'scale': 0.15,
-                    'is_refracted': True,
-                })
+            # Spawn the new bullet at the "top" of the pyramid (cy - r)
+            # going straight up (negative Y) with an increased scale.
+            new_bullets.append({
+                'x': cx,
+                'y': cy - r - 5,
+                'vx': 0.0,
+                'vy': -speed,
+                'life': 25, 
+                'scale': current_scale * 1.5, # Size gets slightly increased
+                'is_refracted': True,
+            })
 
         elif stype == 'Cone':       
             if dist < 1e-6:
@@ -209,49 +204,25 @@ class ScenePhysicsEngine:
             laser['active'] = False
 
         elif stype == 'Pyramid':    
-            if laser.get('is_refracted'):
-                return
-                
-            # DESTROY original laser
+            # Deactivate incoming laser
             laser['active'] = False
             
-            rainbow_colors = [
-                (148, 0, 211), (75, 0, 130), (255, 0, 0), (0, 255, 0),
-                (0, 255, 255), (0, 165, 255), (0, 0, 255),
-            ]
-            
-            lx = laser['p2'][0] - laser['p1'][0]
-            ly = laser['p2'][1] - laser['p1'][1]
-            speed = math.hypot(lx, ly)
-            
-            if speed < 1e-6:
-                return
+            # Extract current speed and size (default to 70 and 1.0 if not set)
+            speed = math.hypot(laser.get('vx', 0), laser.get('vy', 0)) or 70.0
+            current_width = laser.get('width', 1.0)
 
-            # Spawn from the exact impact point (p1)
-            start_x = laser['p1'][0]
-            start_y = laser['p1'][1]
-
-            base_angle = math.atan2(ly, lx)
-            spread = math.pi / 2          
-            angle_step = spread / (len(rainbow_colors) - 1) if len(rainbow_colors) > 1 else 0
-            start_angle = base_angle - spread / 2
-            
-            for k, color in enumerate(rainbow_colors):
-                angle = start_angle + k * angle_step
-                dx = math.cos(angle)
-                dy = math.sin(angle)
-                
-                new_lasers.append({
-                    'p1': (start_x, start_y),
-                    'p2': (start_x + dx * 100, start_y + dy * 100),
-                    'color': color,
-                    'heat': 0,
-                    'active': True,
-                    'vx': dx * 50, # Slower visual speed to ease rendering
-                    'vy': dy * 50,
-                    'life': 10,    # Fast fade-out
-                    'is_refracted': True 
-                })
+            # Spawn new laser coming out of the top, going straight up
+            new_lasers.append({
+                'p1': (cx, cy - r - 5),
+                'p2': (cx, cy - r - 155), # 150 length pointing up
+                'color': laser.get('color', (255, 255, 255)),
+                'heat': 0, 
+                'active': True,
+                'vx': 0.0, 
+                'vy': -speed, 
+                'life': 25,
+                'width': current_width * 1.5 # Size gets slightly increased
+            })
 
         elif stype == 'Cone':       
             nx = cx - (laser['p1'][0] + laser['p2'][0]) / 2

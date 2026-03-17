@@ -4,6 +4,7 @@ import random
 import time
 import math
 
+
 # ================================================================
 #  SCENE PHYSICS ENGINE
 # ================================================================
@@ -50,7 +51,7 @@ class ScenePhysicsEngine:
 
         # Sphere water leak
         ws = self.sphere_state
-        ws['water_level'] = max(0.0, ws['water_level'] - 2.5 * dt)
+        ws['water_level'] = max(0.0, ws['water_level'] - 10 * dt)
         ws['last_update'] = now
 
         # Move bullets
@@ -59,10 +60,22 @@ class ScenePhysicsEngine:
             b['y'] += b['vy']
             b['life'] -= 1
 
-        # Cool lasers
+        # Process lasers (Heat, Movement, and Life)
         for laser in self.lasers:
             if laser['active']:
+                # Move laser if it has velocity
+                if 'vx' in laser and 'vy' in laser:
+                    laser['p1'] = (laser['p1'][0] + laser['vx'], laser['p1'][1] + laser['vy'])
+                    laser['p2'] = (laser['p2'][0] + laser['vx'], laser['p2'][1] + laser['vy'])
+                
+                # Cool down the laser heat
                 laser['heat'] = max(0, laser['heat'] - 5)
+                
+                # CRITICAL FIX: Decrease laser life so they don't get stuck forever!
+                # Defaults to 2 frames for instant beams if no life is set.
+                laser['life'] = laser.get('life', 2) - 1
+                if laser['life'] <= 0:
+                    laser['active'] = False
 
         self._check_collisions()
 
@@ -88,8 +101,10 @@ class ScenePhysicsEngine:
             for j, lb in enumerate(active_lasers):
                 if j <= i: continue
                 if self._segments_intersect(la['p1'], la['p2'], lb['p1'], lb['p2']):
-                    la['heat'] = min(255, la['heat'] + 50)
-                    lb['heat'] = min(255, lb['heat'] + 50)
+                    # Spike heat instantly to 255 because fast-moving beams 
+                    # only overlap for 1-2 frames!
+                    la['heat'] = 255
+                    lb['heat'] = 255
 
         new_bullets: list[dict] = []
         new_lasers:  list[dict] = []
@@ -116,17 +131,26 @@ class ScenePhysicsEngine:
         stype = shape['type']
         if stype == 'Box':
             b['life'] = 0
+                
         elif stype == 'Pyramid':
+            # Prevent the newly spawned bullet from getting stuck in an infinite loop
+            if b.get('is_refracted'):
+                return
+
+            # Destroy the incoming bullet
             b['life'] = 0
-            angle_step = (2 * math.pi) / 7
-            for k in range(7):
-                angle = k * angle_step
-                speed = math.hypot(b['vx'], b['vy']) or 10.0
-                new_bullets.append({
-                    'x': cx, 'y': cy,
-                    'vx': math.cos(angle) * speed, 'vy': math.sin(angle) * speed,
-                    'life': 60,
-                })
+            speed = math.hypot(b['vx'], b['vy']) or 10.0
+
+            # Spawn a single bullet at the top of the pyramid going straight up
+            new_bullets.append({
+                'x': cx, 
+                'y': cy - r - 5,  # Subtracting 'r' and 5 puts it just above the top tip
+                'vx': 0.0, 
+                'vy': -speed,     # Negative Y velocity moves it straight up
+                'life': 60,
+                'is_refracted': True
+            })
+
         elif stype == 'Cone':
             if dist < 1e-6: return
             nx = (b['x'] - cx) / dist
@@ -146,51 +170,169 @@ class ScenePhysicsEngine:
             self.sphere_state['water_level'] = min(100.0, self.sphere_state['water_level'] + 10.0)
 
     def _apply_laser_shape_rule(self, laser: dict, shape: dict, new_lasers: list):
+        # 1. Short-circuit if deactivated or already collided
+        # The 'has_collided' flag prevents frozen incident lasers from spawning infinite duplicates
+        if not laser.get('active', True) or laser.get('has_collided', False):
+            return
+
         cx, cy, r = shape['cx'], shape['cy'], shape['r']
         dist = self._point_line_dist((cx, cy), laser['p1'], laser['p2'])
-        if dist >= r: return
+        
+        if dist >= r:
+            return
 
         stype = shape['type']
-        if stype == 'Box':
-            laser['active'] = False
-        elif stype == 'Pyramid':
-            laser['active'] = False
-            rainbow_colors = [
-                (148, 0, 211), (75, 0, 130), (255, 0, 0), (0, 255, 0),
-                (0, 255, 255), (0, 165, 255), (0, 0, 255),
-            ]
-            lx = laser['p2'][0] - laser['p1'][0]
-            ly = laser['p2'][1] - laser['p1'][1]
-            base_angle = math.atan2(ly, lx)
-            arc = math.pi / 2
-            angle_step = arc / 6 if len(rainbow_colors) > 1 else 0
-            start_angle = base_angle - arc / 2
-            length = 800.0
-            for k, color in enumerate(rainbow_colors):
-                angle = start_angle + k * angle_step
-                ex = cx + math.cos(angle) * length
-                ey = cy + math.sin(angle) * length
-                new_lasers.append({'p1': (cx, cy), 'p2': (ex, ey), 'color': color, 'heat': 0, 'active': True})
-        elif stype == 'Cone':
-            nx = cx - (laser['p1'][0] + laser['p2'][0]) / 2
-            ny = cy - (laser['p1'][1] + laser['p2'][1]) / 2
-            n_len = math.hypot(nx, ny)
-            if n_len < 1e-6: return
-            nx /= n_len; ny /= n_len
-            nx, ny = -nx, -ny
-            lx = laser['p2'][0] - laser['p1'][0]
-            ly = laser['p2'][1] - laser['p1'][1]
-            dot = lx * nx + ly * ny
-            rlx = lx - 2 * dot * nx
-            rly = ly - 2 * dot * ny
-            laser['active'] = False
-            new_lasers.append({'p1': (cx, cy), 'p2': (cx + rlx, cy + rly), 'color': laser['color'], 'heat': 0, 'active': True})
-        elif stype == 'Cylinder':
-            laser['active'] = False
-            new_lasers.append({'p1': (cx, cy - r), 'p2': (cx, cy - r - 800), 'color': laser['color'], 'heat': 0, 'active': True})
-            new_lasers.append({'p1': (cx, cy + r), 'p2': (cx, cy + r + 800), 'color': laser['color'], 'heat': 0, 'active': True})
-        elif stype == 'Sphere':
+
+        # 2. Capture initial velocity and direction for all shapes
+        vx = laser.get('vx', 0.0)
+        vy = laser.get('vy', 0.0)
+        speed = math.hypot(vx, vy)
+        
+        # Fallback for static continuous beams
+        if speed < 1e-6:
+            vx = laser['p2'][0] - laser['p1'][0]
+            vy = laser['p2'][1] - laser['p1'][1]
+            speed = math.hypot(vx, vy)
+            if speed < 1e-6:
+                return
+                
+        dx, dy = vx / speed, vy / speed
+        
+        # 3. Default approximate hit point (surface of the collider)
+        hit_x = cx - dx * r
+        hit_y = cy - dy * r
+
+        # 4. Apply shape-specific logic
+        if stype == 'Box':          
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
+
+        elif stype == 'Pyramid':    
+            # Stop incoming laser at the surface
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
+            
+            current_width = laser.get('width', 1.0)
+            
+            # Spawn new laser coming out of the top
+            new_lasers.append({
+                'p1': (cx, cy - r - 5),
+                'p2': (cx, cy - r - 155),
+                'color': laser.get('color', (255, 255, 255)),
+                'heat': 0, 
+                'active': True,
+                'vx': 0.0, 
+                'vy': -speed, 
+                'life': laser.get('life', 25),
+                'width': current_width * 1.5 
+            })
+
+        elif stype == 'Cone':       
+            # 1. Get the normalized incident direction (V)
+            vx = laser['p2'][0] - laser['p1'][0]
+            vy = laser['p2'][1] - laser['p1'][1]
+            
+            # Fallback if laser is frozen
+            if abs(vx) < 1e-6 and abs(vy) < 1e-6:
+                vx, vy = laser.get('vx', 0.0), laser.get('vy', 0.0)
+                
+            speed = math.hypot(vx, vy)
+            if speed < 1e-6:
+                return
+
+            dx, dy = vx / speed, vy / speed
+
+            # 2. Ray-Circle Intersection to find the EXACT hit point
+            fx = laser['p1'][0] - cx
+            fy = laser['p1'][1] - cy
+
+            b = fx * dx + fy * dy
+            c = (fx * fx + fy * fy) - r * r
+            disc = b * b - c
+
+            # If disc >= 0, the laser intersects the circle
+            if disc >= 0:
+                t = -b - math.sqrt(disc)
+                
+                # If t < 0, the origin is inside the shape. Clamp it.
+                if t < 0: 
+                    t = 0 
+                
+                hit_x = laser['p1'][0] + t * dx
+                hit_y = laser['p1'][1] + t * dy
+
+                # 3. Calculate the true Normal (N) at the exact surface hit point
+                nx = hit_x - cx
+                ny = hit_y - cy
+                n_len = math.hypot(nx, ny)
+                
+                if n_len > 1e-6:
+                    nx /= n_len
+                    ny /= n_len
+                else:
+                    nx, ny = -dx, -dy # Fallback
+
+                # 4. Reflection formula: R = V - 2(V * N)N
+                dot = dx * nx + dy * ny
+                rx = dx - 2.0 * dot * nx
+                ry = dy - 2.0 * dot * ny
+
+                # 5. Stop the incident laser exactly at the surface
+                laser['p2'] = (hit_x, hit_y)
+                laser['vx'] = 0.0
+                laser['vy'] = 0.0
+                laser['has_collided'] = True
+
+                # 6. Spawn the reflected laser (offset slightly to prevent getting stuck)
+                new_lasers.append({
+                    'p1': (hit_x + rx * 2.0, hit_y + ry * 2.0),
+                    'p2': (hit_x + rx * 155.0, hit_y + ry * 155.0),
+                    'color': laser.get('color', (255, 255, 255)),
+                    'heat': 0,
+                    'active': True,
+                    'vx': rx * speed,
+                    'vy': ry * speed,
+                    'life': laser.get('life', 25)
+                })
+
+        elif stype == 'Cylinder':   
+            # Stop incoming laser at the surface
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
+
+            new_lasers.append({
+                'p1': (cx, cy - r - 5),
+                'p2': (cx, cy - r - 155),
+                'color': laser.get('color', (255, 255, 255)), 
+                'heat': 0, 'active': True,
+                'vx': 0, 'vy': -speed, 'life': laser.get('life', 25)
+            })
+            new_lasers.append({
+                'p1': (cx, cy + r + 5),
+                'p2': (cx, cy + r + 155),
+                'color': laser.get('color', (255, 255, 255)), 
+                'heat': 0, 'active': True,
+                'vx': 0, 'vy': speed, 'life': laser.get('life', 25)
+            })
+
+        elif stype == 'Sphere':     
             shape['glowing'] = True
+            
+            # The laser charges the sphere, causing it to grow as a solid!
+            # We allow it to exceed 100.0 up to 150.0 so it visibly expands past its outline.
+            self.sphere_state['water_level'] = min(150.0, self.sphere_state['water_level'] + 4.0)
+            
+            # Stop incoming laser at the surface
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
 
     def _point_line_dist(self, pt: tuple, start: tuple, end: tuple) -> float:
         px, py = pt
@@ -208,6 +350,7 @@ class ScenePhysicsEngine:
         return math.hypot(px - closest_x, py - closest_y)
 
     @staticmethod
+
     def _segments_intersect(p1: tuple, p2: tuple, p3: tuple, p4: tuple) -> bool:
         def cross(o, a, b): return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
         def on_segment(p, q, r): return (min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and min(p[1], r[1]) <= q[1] <= max(p[1], r[1]))
@@ -224,6 +367,71 @@ class ScenePhysicsEngine:
 #  HOLOGRAM EFFECT
 # ================================================================
 class HologramEffect:
+
+    def _draw_iron_man_glove(self, img, lms, w, h, side):
+        if lms is None or len(lms) == 0: return img
+        # --- Iron Man Palette (BGR format) ---
+        armor_red = (40, 40, 200)    
+        armor_gold = (50, 200, 255)  
+        repulsor_cyan = (255, 255, 200)
+        shadow_red = (15, 15, 120)
+
+        # Convert normalized LMS to pixel coordinates
+        pts = [(int(lm[0]*w), int(lm[1]*h)) for lm in lms]
+        overlay = np.zeros_like(img)
+
+        # 1. Draw the Palm / Back-of-hand Plate
+        # Landmarks 0 (wrist), 5, 9, 13, 17 (knuckles) make a perfect hand-plate
+        palm_pts = np.array([pts[0], pts[17], pts[13], pts[9], pts[5]], np.int32)
+        
+        # Fill plate and add golden trim
+        cv2.fillPoly(overlay, [palm_pts], shadow_red)
+        cv2.polylines(overlay, [palm_pts], True, armor_gold, 2, cv2.LINE_AA)
+
+        # 2. Draw Finger Mechanical Segments
+        fingers = [
+            (1, 2, 3, 4),       # Thumb
+            (5, 6, 7, 8),       # Index
+            (9, 10, 11, 12),    # Middle
+            (13, 14, 15, 16),   # Ring
+            (17, 18, 19, 20)    # Pinky
+        ]
+
+        for finger in fingers:
+            for i in range(len(finger) - 1):
+                p1, p2 = pts[finger[i]], pts[finger[i+1]]
+                
+                # Outer armor shell (Thick Red)
+                cv2.line(overlay, p1, p2, armor_red, 12, cv2.LINE_AA)
+                # Inner mechanical skeleton (Thin Gold)
+                cv2.line(overlay, p1, p2, armor_gold, 3, cv2.LINE_AA)
+                # Joint nodes
+                cv2.circle(overlay, p1, 5, armor_gold, -1, cv2.LINE_AA)
+
+            # Emitter nodes at fingertips
+            cv2.circle(overlay, pts[finger[-1]], 6, repulsor_cyan, -1, cv2.LINE_AA)
+
+        # 3. Draw the Main Palm Repulsor
+        # Calculate the center of the palm
+        cx = sum([p[0] for p in palm_pts]) // 5
+        cy = sum([p[1] for p in palm_pts]) // 5
+
+        # If palm is open, charge up the repulsor
+        if self._is_palm_open(lms):
+            pulse = int(18 + 5 * math.sin(self.frame_count * 0.3))
+            cv2.circle(overlay, (cx, cy), pulse, repulsor_cyan, -1, cv2.LINE_AA)
+            cv2.circle(overlay, (cx, cy), pulse + 6, armor_gold, 2, cv2.LINE_AA)
+        else:
+            # Back of hand glow / standby mode
+            cv2.circle(overlay, (cx, cy), 12, armor_gold, -1, cv2.LINE_AA)
+
+        # 4. Composite with Glow Magic
+        glow = cv2.GaussianBlur(overlay, (15, 15), 0)
+        img = cv2.addWeighted(img, 1.0, overlay, 0.85, 0)
+        img = cv2.addWeighted(img, 1.0, glow, 0.6, 0)
+
+        return img
+
     def __init__(self):
         self.font = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -639,10 +847,6 @@ class HologramEffect:
         if glowing:
             current_holo_blue = (min(255, self.holo_blue[0]+100), min(255, self.holo_blue[1]+100), min(255, self.holo_blue[2]+100))
             pulse_r += 10
-            
-        if shape == "Sphere" and water_level > 0:
-            water_r = int((radius * 0.9) * (water_level / 100.0))
-            cv2.circle(overlay, (cx, cy), water_r, (255, 120, 50), -1, cv2.LINE_AA)
 
         beam_color = (current_holo_blue[0]//4, current_holo_blue[1]//4, current_holo_blue[2]//4)
         cv2.circle(overlay, (palm_cx, palm_cy), pulse_r, current_holo_blue, 2, cv2.LINE_AA)
@@ -657,6 +861,14 @@ class HologramEffect:
             cv2.line(overlay, pt1, pt2, current_holo_blue, 3, cv2.LINE_AA)
         for pt in pts:
             cv2.circle(overlay, pt, 3, (255,255,255), -1, cv2.LINE_AA)
+
+        if shape == "Sphere" and water_level > 0:
+            solid_r = int(radius * (water_level / 100.0))
+            # Main solid glowing color
+            cv2.circle(overlay, (cx, cy), solid_r, current_holo_blue, -1, cv2.LINE_AA)
+            # Add an intense white energy core in the center
+            if solid_r > 12:
+                cv2.circle(overlay, (cx, cy), int(solid_r * 0.7), (255, 255, 255), -1, cv2.LINE_AA)
 
         y_idx   = np.arange(img.shape[0], dtype=np.float32).reshape(-1, 1)
         scan    = 0.72 + 0.28 * np.sin(y_idx * 0.65 - self.frame_count * 0.42)
@@ -696,28 +908,76 @@ class HologramEffect:
         for l in lasers:
             start_pt = (int(l['p1'][0]), int(l['p1'][1]))
             end_pt = (int(l['p2'][0]), int(l['p2'][1]))
-            color = l['color']
-            thickness = 8 + int(l['heat'] / 30) # Lasers get thicker as they heat up
             
-            cv2.line(overlay, start_pt, end_pt, (255,255,255), 2, cv2.LINE_AA)
-            cv2.line(overlay, start_pt, end_pt, color, thickness, cv2.LINE_AA)
+            base_color = l['color']
+            heat = l.get('heat', 0)
             
+            # Thickness grows with heat
+            thickness = 8 + int((heat / 255.0) * 20) 
             dist = math.hypot(end_pt[0]-start_pt[0], end_pt[1]-start_pt[1])
-            if dist > 1:
-                dx = (end_pt[0]-start_pt[0]) / dist
-                dy = (end_pt[1]-start_pt[1]) / dist
-                step = max(8, int(dist/50))
-                for i in range(0, int(dist), step):
-                    px = start_pt[0] + dx * i
-                    py = start_pt[1] + dy * i
-                    swirl_x = math.cos(i*0.1 + time_offset) * 15
-                    swirl_y = math.sin(i*0.1 + time_offset) * 15
-                    nx, ny = -dy, dx
-                    fx = int(px + nx * swirl_x)
-                    fy = int(py + ny * swirl_y)
-                    if 0 <= fx < w and 0 <= fy < h:
-                        cv2.circle(overlay, (fx, fy), 2, (255,255,255), -1)
-                        cv2.circle(overlay, (fx, fy), 5, color, -1)
+            
+            if dist <= 1:
+                continue
+
+            dx = (end_pt[0]-start_pt[0]) / dist
+            dy = (end_pt[1]-start_pt[1]) / dist
+
+            # ==========================================
+            #  DRAW THE BEAM (GRADIENT IF HOT)
+            # ==========================================
+            if heat > 50:
+                # Slicing the line into 5-pixel chunks to draw the gradient
+                segment_len = 5 
+                for i in range(0, int(dist), segment_len):
+                    pA = (int(start_pt[0] + dx * i), int(start_pt[1] + dy * i))
+                    pB = (int(start_pt[0] + dx * min(i+segment_len, dist)), int(start_pt[1] + dy * min(i+segment_len, dist)))
+                    
+                    # Generate a shifting hue based on position, time, and heat
+                    # (OpenCV Hue goes from 0-179)
+                    hue = int((i * 1.5 - self.frame_count * 10) % 180)
+                    
+                    # Convert HSV to BGR for OpenCV
+                    hsv = np.uint8([[[hue, 255, 255]]])
+                    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
+                    spectrum_color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+                    
+                    cv2.line(overlay, pA, pB, (255,255,255), 2, cv2.LINE_AA)
+                    cv2.line(overlay, pA, pB, spectrum_color, thickness, cv2.LINE_AA)
+            else:
+                # Normal solid color when cool
+                color = (
+                    min(255, base_color[0] + heat),
+                    min(255, base_color[1] + heat),
+                    min(255, base_color[2] + heat)
+                )
+                cv2.line(overlay, start_pt, end_pt, (255,255,255), 2, cv2.LINE_AA)
+                cv2.line(overlay, start_pt, end_pt, color, thickness, cv2.LINE_AA)
+            
+            # ==========================================
+            #  DRAW THE SWIRLS
+            # ==========================================
+            step = max(8, int(dist/50))
+            for i in range(0, int(dist), step):
+                swirl_radius = 15 + int((heat / 255.0) * 15)
+                swirl_x = math.cos(i*0.1 + time_offset + (heat/50.0)) * swirl_radius
+                swirl_y = math.sin(i*0.1 + time_offset + (heat/50.0)) * swirl_radius
+                
+                nx, ny = -dy, dx
+                fx = int(start_pt[0] + dx * i + nx * swirl_x)
+                fy = int(start_pt[1] + dy * i + ny * swirl_y)
+                
+                if 0 <= fx < w and 0 <= fy < h:
+                    cv2.circle(overlay, (fx, fy), 2, (255,255,255), -1)
+                    
+                    # Make swirls match the rainbow gradient if hot!
+                    if heat > 50:
+                        hue = int((i * 1.5 - self.frame_count * 10) % 180)
+                        bgr = cv2.cvtColor(np.uint8([[[hue, 255, 255]]]), cv2.COLOR_HSV2BGR)[0][0]
+                        pt_color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+                    else:
+                        pt_color = color
+                        
+                    cv2.circle(overlay, (fx, fy), 5, pt_color, -1)
                         
         glow = cv2.GaussianBlur(overlay, (21, 21), 0)
         img  = cv2.add(img, overlay)
@@ -781,18 +1041,20 @@ class HologramEffect:
                                 ('left',  lhs,    w - 14 - BAR_LEN)]:
             now = time.time()
             if not hs['ui_active'] and hs['palm_open_start'] > 0:
-                prog   = min(1.0, (now - hs['palm_open_start']) / 5.0)
+                # MATCH THIS TO YOUR 1.5 SECOND LOGIC TIMER
+                prog   = min(1.0, (now - hs['palm_open_start']) / 1.5) 
                 filled = int(BAR_LEN * prog)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+BAR_LEN, BAR_Y+BAR_TH), (40,30,10), -1)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+filled,  BAR_Y+BAR_TH), (0,200,170), -1)
                 cv2.putText(img, f"{'L' if side=='left' else 'R'} OPEN {int(prog*100)}%",
                             (bar_x, BAR_Y+BAR_TH+12), self.font, 0.30, (0,200,170), 1, cv2.LINE_AA)
             elif hs['ui_active'] and hs['fist_closed_start'] > 0:
-                prog   = min(1.0, (now - hs['fist_closed_start']) / 5.0)
+                # MATCH THIS TO YOUR 1.5 SECOND LOGIC TIMER
+                prog   = min(1.0, (now - hs['fist_closed_start']) / 1.5) 
                 filled = int(BAR_LEN * prog)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+BAR_LEN, BAR_Y+BAR_TH), (20,10,30), -1)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+filled,  BAR_Y+BAR_TH), (0,60,220), -1)
-                cv2.putText(img, f"{'L' if side=='left' else 'R'} OFF {int(prog*100)}%",
+                cv2.putText(img, f"{'R' if side=='left' else 'L'} OFF {int(prog*100)}%",
                             (bar_x, BAR_Y+BAR_TH+12), self.font, 0.30, (0,80,240), 1, cv2.LINE_AA)
 
         return img
@@ -816,7 +1078,7 @@ class HologramEffect:
         if palm_open and not hs['ui_active'] and not fist:
             if hs['palm_open_start'] == 0:
                 hs['palm_open_start'] = now
-            elif now - hs['palm_open_start'] >= 5.0:
+            elif now - hs['palm_open_start'] >= 1.5:
                 hs['ui_active']       = True
                 hs['panel_open']      = True  
                 hs['palm_open_start'] = 0
@@ -826,7 +1088,7 @@ class HologramEffect:
         if fist and hs['ui_active']:
             if hs['fist_closed_start'] == 0:
                 hs['fist_closed_start'] = now
-            elif now - hs['fist_closed_start'] >= 5.0:
+            elif now - hs['fist_closed_start'] >= 1.5:
                 hs['ui_active']         = False
                 hs['panel_open']        = False
                 hs['selected_object']   = None
@@ -845,6 +1107,16 @@ class HologramEffect:
         # 1. Background
         output = self._get_dynamic_background(h, w)
 
+
+        left_lms  = getattr(tracking_data, 'left_hand_landmarks',  None) if tracking_data else None
+        right_lms = getattr(tracking_data, 'right_hand_landmarks', None) if tracking_data else None
+
+        output = self._draw_iron_man_glove(output, left_lms, w, h, 'left')
+        output = self._draw_iron_man_glove(output, right_lms, w, h, 'right')
+
+        self._update_hand_state(left_lms,  'left',  h, w)
+        self._update_hand_state(right_lms, 'right', h, w)
+
         # 2. Hologram person
         if tracking_data and getattr(tracking_data, 'has_person', False):
             raw_mask = getattr(tracking_data, 'segmentation_mask', None)
@@ -859,12 +1131,8 @@ class HologramEffect:
                 holo_masked = cv2.bitwise_and(scaled_holo, scaled_holo, mask=cleaned_mask)
                 output       = cv2.add(output, holo_masked)
 
-        left_lms  = getattr(tracking_data, 'left_hand_landmarks',  None) if tracking_data else None
-        right_lms = getattr(tracking_data, 'right_hand_landmarks', None) if tracking_data else None
-
         # 3. Update gesture state
-        self._update_hand_state(left_lms,  'left',  h, w)
-        self._update_hand_state(right_lms, 'right', h, w)
+      
 
         # 4. Draw UI panels
         if self.hand_state['left']['panel_open']:

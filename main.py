@@ -1,5 +1,5 @@
 """
-main.py - Orchestrator for ChibiCam.
+main.py - Orchestrator for ArtCam.
 """
 from cv2.gapi.core import cpu
 import argparse
@@ -20,11 +20,11 @@ from model_engine import ArtGenerator
 from display import ScreenManager, ViewMode
 from filters import FilterEngine
 from server import app, manager
-from pookie import RibbonEffect # <--- IMPORTED HERE
-from hologram_effect import HologramEffect # <--- IMPORTED HOLOGRAM EFFECT
+from pookie import RibbonEffect 
+from hologram_effect import HologramEffect 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="ChibiCam")
+    parser = argparse.ArgumentParser(description="ArtCam")
     parser.add_argument("--camera", "-c", type=int, default=None)
     parser.add_argument("--view-mode", "-v", choices=["webcam_only", "wireframe_only", "matrix_only", "glitch_only", "terminal_only", "hologram_only", "dot_field_only"], default="webcam_only")
     parser.add_argument("--debug", "-d", action="store_true")
@@ -56,23 +56,23 @@ async def async_main(args=None):
     cuda_available = torch.cuda.is_available()
     if args.gpu:
         device = "cuda"
-        print(f"[ChibiCam] GPU mode forced via --gpu flag")
+        print(f"[ArtCam] GPU mode forced via --gpu flag")
         if cuda_available:
-            print(f"[ChibiCam] CUDA device: {torch.cuda.get_device_name(0)}")
+            print(f"[ArtCam] CUDA device: {torch.cuda.get_device_name(0)}")
         else:
-            print(f"[ChibiCam] WARNING: torch.cuda.is_available() returned False.")
-            print(f"[ChibiCam] Attempting CUDA anyway (system-wide PyTorch CUDA).")
+            print(f"[ArtCam] WARNING: torch.cuda.is_available() returned False.")
+            print(f"[ArtCam] Attempting CUDA anyway (system-wide PyTorch CUDA).")
     elif cuda_available:
-        print(f"\n[ChibiCam] GPU detected: {torch.cuda.get_device_name(0)}")
+        print(f"\n[ArtCam] GPU detected: {torch.cuda.get_device_name(0)}")
         print("[1] GPU (CUDA) | [2] CPU")
         gpu_choice = input("Select device [1]: ").strip()
         device = "cpu" if gpu_choice == "2" else "cuda"
     else:
-        print("\n[ChibiCam] No CUDA GPU detected. Running on CPU.")
-        print("[ChibiCam] TIP: Use --gpu flag if PyTorch CUDA is installed system-wide.")
+        print("\n[ArtCam] No CUDA GPU detected. Running on CPU.")
+        print("[ArtCam] TIP: Use --gpu flag if PyTorch CUDA is installed system-wide.")
         device = "cpu"
     
-    print(f"[ChibiCam] Using device: {device.upper()}")
+    print(f"[ArtCam] Using device: {device.upper()}")
     manager.settings["device"] = device
     
     if args.camera is None: args.camera = select_camera()
@@ -90,14 +90,14 @@ async def async_main(args=None):
     generator = None
     filter_engine = FilterEngine()
     ribbon = RibbonEffect() 
-    hologram_effect = HologramEffect() # <--- INITIALIZED HERE (Persists physics state)
+    hologram_effect = HologramEffect() 
     
     # Stylization caching for frame skipping
     last_stylized_frame = None
     stylize_skip_count = 0
     STYLIZE_SKIP_RATE = 2  # Process every Nth frame if neural style is active
     
-    display = ScreenManager(window_name="ChibiCam", show_debug=args.debug, fullscreen=args.fullscreen)
+    display = ScreenManager(window_name="ArtCam", show_debug=args.debug, fullscreen=args.fullscreen)
     display.set_model_name("MediaPipe" if tracker_type == "mediapipe" else "YOLOv8m")
     display.set_device(device)
     
@@ -179,7 +179,6 @@ async def async_main(args=None):
             elif is_terminal:
                 stylized_frame = filter_engine.apply_terminal_filter(frame, tracking_data)
             elif is_hologram:
-                # <--- CALLING THE STATEFUL CLASS HERE
                 stylized_frame = hologram_effect.process_frame(frame, tracking_data) 
             elif is_dot_field:
                 stylized_frame = filter_engine.apply_dot_field_filter(frame, tracking_data)
@@ -214,7 +213,6 @@ async def async_main(args=None):
                         stylize_skip_count = 0
                     else:
                         stylize_skip_count += 1
-                        # .copy() is required here so the ribbon doesn't permanently draw on the cached frame!
                         stylized_frame = last_stylized_frame.copy() 
             
             # Handle wireframe overlay
@@ -222,7 +220,6 @@ async def async_main(args=None):
                 stylized_frame = tracking_vis if tracking_vis is not None else np.zeros_like(frame)
             
             # GLOBAL OVERLAYS (Must happen BEFORE display.render)
-            # This ensures the ribbon is always visible on top of any effect
             if pookie_mode:
                 if stylized_frame is not None:
                     stylized_frame = ribbon.draw(stylized_frame, tracking_data)
@@ -239,16 +236,13 @@ async def async_main(args=None):
 
             asyncio.create_task(manager.broadcast_frame(stylized_frame, {"fps": fps, "entities": entities}))
 
-            # RENDER TO SCREEN (This captures the keypress via cv2.waitKey internally)
+            # RENDER TO SCREEN
             if not display.render(stylized_frame=stylized_frame, original_frame=frame, tracking_overlay=tracking_vis):
                 break
             
-            # HANDLE INPUT EVENTS (Processed after render for the next frame)
-            # Note: Ribbon is now controlled by frontend pookie_mode setting
-            # HANDLE INPUT EVENTS
+            # HANDLE INPUT EVENTS (Processed from the nested menu state machine)
             if hasattr(display, '_last_key_result') and display._last_key_result:
-                if display._last_key_result == 'g':
-                    # Toggle pookie mode in the global settings dictionary
+                if display._last_key_result == 'toggle_pookie':
                     current_state = manager.settings.get("pookieMode", False)
                     manager.settings["pookieMode"] = not current_state
                     print(f"[Main] Toggled Ribbon via keyboard: {not current_state}")
@@ -261,7 +255,7 @@ async def async_main(args=None):
     finally:
         camera.stop()
         display.close()
-        hologram_effect.close() # <--- CLEANUP CALLED HERE
+        hologram_effect.close() 
         cv2.destroyAllWindows()
 
 def main():

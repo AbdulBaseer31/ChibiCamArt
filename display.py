@@ -1,10 +1,3 @@
-"""
-display.py
-
-High-performance display rendering module with FPS monitoring.
-Handles OpenCV window management and performance overlay rendering.
-"""
-
 import time
 from enum import Enum, auto
 from typing import Optional, Tuple, Dict, List
@@ -17,13 +10,13 @@ class ViewMode(Enum):
     """
     Display view modes for the application.
     """
-    WEBCAM_ONLY = auto()       # 1: Original camera feed only
-    WIREFRAME_ONLY = auto()    # 2: Wireframe on black background
-    MATRIX_ONLY = auto()       # 3: Matrix binary rain effect
-    GLITCH_ONLY = auto()       # 4: Glitch digital artifact effect
-    TERMINAL_ONLY = auto()     # 5: Terminal effect with interactive buttons
-    HOLOGRAM_ONLY = auto()     # 6: Hologram effect
-    DOT_FIELD_ONLY = auto()    # 7: Dot field effect
+    WEBCAM_ONLY = auto()       # Original camera feed only
+    WIREFRAME_ONLY = auto()    # Wireframe on black background
+    MATRIX_ONLY = auto()       # Matrix binary rain effect
+    GLITCH_ONLY = auto()       # Glitch digital artifact effect
+    TERMINAL_ONLY = auto()     # Terminal effect with interactive buttons
+    HOLOGRAM_ONLY = auto()     # Hologram effect
+    DOT_FIELD_ONLY = auto()    # Dot field effect
     
     def next(self) -> "ViewMode":
         """Cycle to the next view mode."""
@@ -31,50 +24,52 @@ class ViewMode(Enum):
         current_index = modes.index(self)
         return modes[(current_index + 1) % len(modes)]
 
+class MenuState(Enum):
+    """
+    Menu states for keyboard navigation.
+    """
+    MAIN = auto()
+    INTERACTIVE = auto()
+    FILTERS = auto()
+    PROPS = auto()
+
 
 class ScreenManager:
     """
-    Manages OpenCV display windows with performance monitoring.
-    
-    Provides real-time FPS counter, frame timing visualization,
-    and clean window lifecycle management.
+    Manages OpenCV display windows with text overlays disabled.
     """
     
     def __init__(
         self,
         window_name: str = "ChibiCam - Interactive Art Mirror",
         display_resolution: Optional[Tuple[int, int]] = None,
-        show_fps: bool = True,
-        show_debug: bool = True,
-        fullscreen: bool = False
+        show_fps: bool = True,    # Restored so main.py doesn't crash
+        show_debug: bool = True,  # Restored so main.py doesn't crash
+        fullscreen: bool = False,
+        **kwargs                  # Catch-all for any other stray args
     ) -> None:
         self.window_name = window_name
         self.display_resolution = display_resolution
+        self.fullscreen = fullscreen
+        
+        # We store these just in case other parts of your code check them, 
+        # even though we aren't drawing them anymore.
         self.show_fps = show_fps
         self.show_debug = show_debug
-        self.fullscreen = fullscreen
-        self._last_key_result = None
         
-        # Window state
+        # Internal state
         self._window_created = False
         self._is_running = False
+        self.menu_state = MenuState.MAIN
+        self.view_mode: ViewMode = ViewMode.WIREFRAME_ONLY
         
-        # Performance tracking
+        # Performance tracking (kept for logic, but not displayed)
         self._frame_times: deque[float] = deque(maxlen=30)
         self._last_frame_time = time.perf_counter()
         self._fps = 0.0
-        
-        # Pipeline timing tracking
         self._timing_data: Dict[str, float] = {}
         
-        # UI state
-        self._show_original = False  # Legacy toggle for side-by-side
-        self.view_mode: ViewMode = ViewMode.WIREFRAME_ONLY  # Default: single output
-        self._current_fps_color = (0, 255, 0)  # Green (good)
-        self.model_name: str = "unknown"  # Track which pose model is being used
-        self.device: str = "unknown"      # Track which compute device is being used
-        
-        print(f"[ScreenManager] Initialized: '{window_name}'")
+        print(f"[ScreenManager] UI-Free Mode Initialized.")
     
     def create_window(self) -> None:
         if self._window_created:
@@ -170,6 +165,101 @@ class ScreenManager:
             cv2.putText(frame, line, (15, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
         
         return frame
+
+    def _draw_help_popup(self, frame: np.ndarray) -> np.ndarray:
+        if not self.show_help:
+            return frame
+
+        lines = []
+        if self.view_mode == ViewMode.WIREFRAME_ONLY:
+            lines = [
+                "Available gestures:",
+                "- Salt Drop (pinch)",
+                "- Victory (V pose)",
+                "- Thumbs up and Thumbs down",
+                "- Explosion (Clap or two fists touching)"
+            ]
+        elif self.view_mode == ViewMode.HOLOGRAM_ONLY:
+            lines = [
+                "Instructions:",
+                "- Keep palm open to Activate UI",
+                "- Close fist to deactivate UI",
+                "- Pinch on element to select it",
+                "- Each element behaves differently with",
+                "  lasers and bullets"
+            ]
+        else:
+            self.show_help = False
+            return frame
+
+        h, w = frame.shape[:2]
+        
+        # Calculate optimal box size
+        max_width = 0
+        for line in lines:
+            size = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]
+            if size[0] > max_width:
+                max_width = size[0]
+                
+        box_width = max_width + 40
+        box_height = len(lines) * 25 + 30
+        
+        x_start = (w - box_width) // 2
+        y_start = (h - box_height) // 2
+        
+        # Draw background overlay
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x_start, y_start), (x_start + box_width, y_start + box_height), (15, 15, 15), -1)
+        cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
+        cv2.rectangle(frame, (x_start, y_start), (x_start + box_width, y_start + box_height), (255, 200, 0), 2)
+        
+        # Render text lines
+        y_text = y_start + 30
+        for line in lines:
+            cv2.putText(frame, line, (x_start + 20, y_text), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            y_text += 25
+            
+        return frame
+
+    def _draw_instructions(self, frame: np.ndarray) -> np.ndarray:
+        h, w = frame.shape[:2]
+        
+        # Mode Tag
+        mode_text = f"MODE: {self.view_mode.name.replace('_', ' ')}"
+        text_size = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+        cv2.rectangle(frame, (w - text_size[0] - 20, 10), (w - 10, 35), (0, 0, 0), -1)
+        cv2.putText(frame, mode_text, (w - text_size[0] - 15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
+        
+        # Menu Instructions
+        if self.menu_state == MenuState.MAIN:
+            instructions = [
+                "=== MAIN MENU ===", 
+                "1: Interactive Filters", 
+                "2: Filters", 
+                "3: Props",
+                "C: Clear (Webcam)",
+                "Q/ESC: Quit"
+            ]
+            if self.view_mode in [ViewMode.WIREFRAME_ONLY, ViewMode.HOLOGRAM_ONLY]:
+                instructions.insert(1, "H: Toggle Help")
+
+        elif self.menu_state == MenuState.INTERACTIVE:
+            instructions = ["=== INTERACTIVE ===", "1: Wireframe", "2: Hologram", "0/ESC: Back"]
+        
+        elif self.menu_state == MenuState.FILTERS:
+            instructions = ["=== FILTERS ===", "1: Matrix", "2: Glitch", "3: Terminal", "4: Dot Field", "0/ESC: Back"]
+        
+        elif self.menu_state == MenuState.PROPS:
+            instructions = ["=== PROPS ===", "1: Pookie Mode (Ribbon)", "0/ESC: Back"]
+
+        # Render instructions bottom-up
+        y_start = h - 30
+        for i, instruction in enumerate(reversed(instructions)):
+            y_pos = y_start - (i * 20)
+            cv2.putText(frame, instruction, (w - 240, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
+            cv2.putText(frame, instruction, (w - 240, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+        
+        return frame
     
     def update_timing(self, stage_name: str, duration_seconds: float) -> None:
         self._timing_data[stage_name] = duration_seconds
@@ -182,14 +272,13 @@ class ScreenManager:
     
     def set_view_mode(self, mode: ViewMode) -> None:
         self.view_mode = mode
+        # Auto-disable help if switching out of an interactive mode
+        if mode not in [ViewMode.WIREFRAME_ONLY, ViewMode.HOLOGRAM_ONLY]:
+            self.show_help = False
         print(f"[ScreenManager] View mode: {mode.name}")
     
     def cycle_view_mode(self) -> None:
-        self.view_mode = self.view_mode.next()
-        print(f"[ScreenManager] View mode: {self.view_mode.name}")
-    
-    def toggle_view(self) -> None:
-        self.cycle_view_mode()
+        self.set_view_mode(self.view_mode.next())
     
     def render(self, stylized_frame: np.ndarray, original_frame: Optional[np.ndarray] = None, tracking_overlay: Optional[np.ndarray] = None) -> bool:
         if not self._window_created:
@@ -209,33 +298,72 @@ class ScreenManager:
             target_w, target_h = self.display_resolution
             display_frame = cv2.resize(display_frame, (target_w, target_h))
         
-        display_frame = self._draw_fps_overlay(display_frame)
-        display_frame = self._draw_debug_overlay(display_frame)
-        display_frame = self._draw_instructions(display_frame)
+        # display_frame = self._draw_fps_overlay(display_frame)
+        # display_frame = self._draw_debug_overlay(display_frame)
+        # display_frame = self._draw_instructions(display_frame)
+        # display_frame = self._draw_help_popup(display_frame)
         
         cv2.imshow(self.window_name, display_frame)
         
+        # ---------- Keyboard Input Handling ----------
         key = cv2.waitKey(1) & 0xFF
         self._last_key_result = None
         
-        if key == ord('q') or key == 27:
+        # Global Navigation / Exits
+        if key == ord('q'):
             print("[ScreenManager] Quit signal received")
             return False
-        elif key == ord('1'): self.set_view_mode(ViewMode.WEBCAM_ONLY)
-        elif key == ord('2'): self.set_view_mode(ViewMode.WIREFRAME_ONLY)
-        elif key == ord('3'): self.set_view_mode(ViewMode.MATRIX_ONLY)
-        elif key == ord('4'): self.set_view_mode(ViewMode.GLITCH_ONLY)
-        elif key == ord('5'): self.set_view_mode(ViewMode.TERMINAL_ONLY)
-        elif key == ord('6'): self.set_view_mode(ViewMode.HOLOGRAM_ONLY)
-        elif key == ord('7'): self.set_view_mode(ViewMode.DOT_FIELD_ONLY)
-        elif key == ord('t'): self.cycle_view_mode()
-        elif key == ord('f'): self._toggle_fullscreen()
+        elif key == 27: # ESC key
+            if self.menu_state != MenuState.MAIN:
+                self.menu_state = MenuState.MAIN
+            else:
+                return False
+        elif key == ord('0'): 
+            self.menu_state = MenuState.MAIN
+
+        # Menu Routing
+        elif self.menu_state == MenuState.MAIN:
+            if key == ord('1'): self.menu_state = MenuState.INTERACTIVE
+            elif key == ord('2'): self.menu_state = MenuState.FILTERS
+            elif key == ord('3'): self.menu_state = MenuState.PROPS
+            elif key == ord('c'): self.set_view_mode(ViewMode.WEBCAM_ONLY)
+                
+        elif self.menu_state == MenuState.INTERACTIVE:
+            if key == ord('1'): 
+                self.set_view_mode(ViewMode.WIREFRAME_ONLY)
+                self.menu_state = MenuState.MAIN
+            elif key == ord('2'): 
+                self.set_view_mode(ViewMode.HOLOGRAM_ONLY)
+                self.menu_state = MenuState.MAIN
+                
+        elif self.menu_state == MenuState.FILTERS:
+            if key == ord('1'): 
+                self.set_view_mode(ViewMode.MATRIX_ONLY)
+                self.menu_state = MenuState.MAIN
+            elif key == ord('2'): 
+                self.set_view_mode(ViewMode.GLITCH_ONLY)
+                self.menu_state = MenuState.MAIN
+            elif key == ord('3'): 
+                self.set_view_mode(ViewMode.TERMINAL_ONLY)
+                self.menu_state = MenuState.MAIN
+            elif key == ord('4'): 
+                self.set_view_mode(ViewMode.DOT_FIELD_ONLY)
+                self.menu_state = MenuState.MAIN
+                
+        elif self.menu_state == MenuState.PROPS:
+            if key == ord('1'):
+                self._last_key_result = 'toggle_pookie'
+                self.menu_state = MenuState.MAIN
+
+        # Global Utilities
+        if key == ord('f'): self._toggle_fullscreen()
         elif key == ord('d'): self.show_debug = not self.show_debug
-        elif key == ord('g'): 
-            self._last_key_result = 'g' # Passes the G keypress back up to main.py
         elif key == ord(' '): 
             print("[ScreenManager] Paused - press any key to continue")
             cv2.waitKey(0)
+        elif key == ord('h'):
+            if self.view_mode in [ViewMode.WIREFRAME_ONLY, ViewMode.HOLOGRAM_ONLY]:
+                self.show_help = not self.show_help
         
         return True
     
@@ -249,29 +377,6 @@ class ScreenManager:
         cv2.putText(stylized, "Chibi Style", (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
         
         return np.hstack([left_frame, stylized])
-    
-    def _draw_instructions(self, frame: np.ndarray) -> np.ndarray:
-        h, w = frame.shape[:2]
-        
-        mode_text = f"MODE: {self.view_mode.name.replace('_', ' ')}"
-        text_size = cv2.getTextSize(mode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-        cv2.rectangle(frame, (w - text_size[0] - 20, 10), (w - 10, 35), (0, 0, 0), -1)
-        cv2.putText(frame, mode_text, (w - text_size[0] - 15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
-        
-        instructions = [
-            "Q/ESC: Quit", "1: Webcam", "2: Wireframe", "3: Matrix", 
-            "4: Glitch", "5: Terminal", "6: Hologram", "7: Dot Field",
-            "T: Cycle modes", "F: Fullscreen", 
-            "D: Debug info", "G: Toggle Ribbon", "SPACE: Pause"
-        ]
-        
-        y_start = h - 30
-        for i, instruction in enumerate(reversed(instructions)):
-            y_pos = y_start - (i * 20)
-            cv2.putText(frame, instruction, (w - 200, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
-            cv2.putText(frame, instruction, (w - 200, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
-        
-        return frame
     
     def _toggle_fullscreen(self) -> None:
         if not self._window_created: return

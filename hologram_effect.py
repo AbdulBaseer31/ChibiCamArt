@@ -50,7 +50,7 @@ class ScenePhysicsEngine:
 
         # Sphere water leak
         ws = self.sphere_state
-        ws['water_level'] = max(0.0, ws['water_level'] - 2.5 * dt)
+        ws['water_level'] = max(0.0, ws['water_level'] - 10 * dt)
         ws['last_update'] = now
 
         # Move bullets
@@ -59,10 +59,21 @@ class ScenePhysicsEngine:
             b['y'] += b['vy']
             b['life'] -= 1
 
-        # Cool lasers
+        # Process lasers (Heat, Movement, and Life)
         for laser in self.lasers:
             if laser['active']:
+                # Move laser if it has velocity
+                if 'vx' in laser and 'vy' in laser:
+                    laser['p1'] = (laser['p1'][0] + laser['vx'], laser['p1'][1] + laser['vy'])
+                    laser['p2'] = (laser['p2'][0] + laser['vx'], laser['p2'][1] + laser['vy'])
+                
+                # Cool down the laser heat
                 laser['heat'] = max(0, laser['heat'] - 5)
+                
+                # Decrease laser life so they don't get stuck forever
+                laser['life'] = laser.get('life', 2) - 1
+                if laser['life'] <= 0:
+                    laser['active'] = False
 
         self._check_collisions()
 
@@ -88,8 +99,8 @@ class ScenePhysicsEngine:
             for j, lb in enumerate(active_lasers):
                 if j <= i: continue
                 if self._segments_intersect(la['p1'], la['p2'], lb['p1'], lb['p2']):
-                    la['heat'] = min(255, la['heat'] + 50)
-                    lb['heat'] = min(255, lb['heat'] + 50)
+                    la['heat'] = 255
+                    lb['heat'] = 255
 
         new_bullets: list[dict] = []
         new_lasers:  list[dict] = []
@@ -116,17 +127,26 @@ class ScenePhysicsEngine:
         stype = shape['type']
         if stype == 'Box':
             b['life'] = 0
+                
         elif stype == 'Pyramid':
+            # Prevent the newly spawned bullet from getting stuck in an infinite loop
+            if b.get('is_refracted'):
+                return
+
+            # Destroy the incoming bullet
             b['life'] = 0
-            angle_step = (2 * math.pi) / 7
-            for k in range(7):
-                angle = k * angle_step
-                speed = math.hypot(b['vx'], b['vy']) or 10.0
-                new_bullets.append({
-                    'x': cx, 'y': cy,
-                    'vx': math.cos(angle) * speed, 'vy': math.sin(angle) * speed,
-                    'life': 60,
-                })
+            speed = math.hypot(b['vx'], b['vy']) or 10.0
+
+            # Spawn a single bullet at the top of the pyramid going straight up
+            new_bullets.append({
+                'x': cx, 
+                'y': cy - r - 5,
+                'vx': 0.0, 
+                'vy': -speed,
+                'life': 60,
+                'is_refracted': True
+            })
+
         elif stype == 'Cone':
             if dist < 1e-6: return
             nx = (b['x'] - cx) / dist
@@ -146,51 +166,146 @@ class ScenePhysicsEngine:
             self.sphere_state['water_level'] = min(100.0, self.sphere_state['water_level'] + 10.0)
 
     def _apply_laser_shape_rule(self, laser: dict, shape: dict, new_lasers: list):
+        if not laser.get('active', True) or laser.get('has_collided', False):
+            return
+
         cx, cy, r = shape['cx'], shape['cy'], shape['r']
         dist = self._point_line_dist((cx, cy), laser['p1'], laser['p2'])
-        if dist >= r: return
+        
+        if dist >= r:
+            return
 
         stype = shape['type']
-        if stype == 'Box':
-            laser['active'] = False
-        elif stype == 'Pyramid':
-            laser['active'] = False
-            rainbow_colors = [
-                (148, 0, 211), (75, 0, 130), (255, 0, 0), (0, 255, 0),
-                (0, 255, 255), (0, 165, 255), (0, 0, 255),
-            ]
-            lx = laser['p2'][0] - laser['p1'][0]
-            ly = laser['p2'][1] - laser['p1'][1]
-            base_angle = math.atan2(ly, lx)
-            arc = math.pi / 2
-            angle_step = arc / 6 if len(rainbow_colors) > 1 else 0
-            start_angle = base_angle - arc / 2
-            length = 800.0
-            for k, color in enumerate(rainbow_colors):
-                angle = start_angle + k * angle_step
-                ex = cx + math.cos(angle) * length
-                ey = cy + math.sin(angle) * length
-                new_lasers.append({'p1': (cx, cy), 'p2': (ex, ey), 'color': color, 'heat': 0, 'active': True})
-        elif stype == 'Cone':
-            nx = cx - (laser['p1'][0] + laser['p2'][0]) / 2
-            ny = cy - (laser['p1'][1] + laser['p2'][1]) / 2
-            n_len = math.hypot(nx, ny)
-            if n_len < 1e-6: return
-            nx /= n_len; ny /= n_len
-            nx, ny = -nx, -ny
-            lx = laser['p2'][0] - laser['p1'][0]
-            ly = laser['p2'][1] - laser['p1'][1]
-            dot = lx * nx + ly * ny
-            rlx = lx - 2 * dot * nx
-            rly = ly - 2 * dot * ny
-            laser['active'] = False
-            new_lasers.append({'p1': (cx, cy), 'p2': (cx + rlx, cy + rly), 'color': laser['color'], 'heat': 0, 'active': True})
-        elif stype == 'Cylinder':
-            laser['active'] = False
-            new_lasers.append({'p1': (cx, cy - r), 'p2': (cx, cy - r - 800), 'color': laser['color'], 'heat': 0, 'active': True})
-            new_lasers.append({'p1': (cx, cy + r), 'p2': (cx, cy + r + 800), 'color': laser['color'], 'heat': 0, 'active': True})
-        elif stype == 'Sphere':
+
+        vx = laser.get('vx', 0.0)
+        vy = laser.get('vy', 0.0)
+        speed = math.hypot(vx, vy)
+        
+        if speed < 1e-6:
+            vx = laser['p2'][0] - laser['p1'][0]
+            vy = laser['p2'][1] - laser['p1'][1]
+            speed = math.hypot(vx, vy)
+            if speed < 1e-6:
+                return
+                
+        dx, dy = vx / speed, vy / speed
+        
+        hit_x = cx - dx * r
+        hit_y = cy - dy * r
+
+        if stype == 'Box':          
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
+
+        elif stype == 'Pyramid':    
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
+            
+            current_width = laser.get('width', 1.0)
+            
+            new_lasers.append({
+                'p1': (cx, cy - r - 5),
+                'p2': (cx, cy - r - 155),
+                'color': laser.get('color', (255, 255, 255)),
+                'heat': 0, 
+                'active': True,
+                'vx': 0.0, 
+                'vy': -speed, 
+                'life': laser.get('life', 25),
+                'width': current_width * 1.5 
+            })
+
+        elif stype == 'Cone':       
+            vx = laser['p2'][0] - laser['p1'][0]
+            vy = laser['p2'][1] - laser['p1'][1]
+            
+            if abs(vx) < 1e-6 and abs(vy) < 1e-6:
+                vx, vy = laser.get('vx', 0.0), laser.get('vy', 0.0)
+                
+            speed = math.hypot(vx, vy)
+            if speed < 1e-6:
+                return
+
+            dx, dy = vx / speed, vy / speed
+
+            fx = laser['p1'][0] - cx
+            fy = laser['p1'][1] - cy
+
+            b = fx * dx + fy * dy
+            c = (fx * fx + fy * fy) - r * r
+            disc = b * b - c
+
+            if disc >= 0:
+                t = -b - math.sqrt(disc)
+                
+                if t < 0: 
+                    t = 0 
+                
+                hit_x = laser['p1'][0] + t * dx
+                hit_y = laser['p1'][1] + t * dy
+
+                nx = hit_x - cx
+                ny = hit_y - cy
+                n_len = math.hypot(nx, ny)
+                
+                if n_len > 1e-6:
+                    nx /= n_len
+                    ny /= n_len
+                else:
+                    nx, ny = -dx, -dy
+
+                dot = dx * nx + dy * ny
+                rx = dx - 2.0 * dot * nx
+                ry = dy - 2.0 * dot * ny
+
+                laser['p2'] = (hit_x, hit_y)
+                laser['vx'] = 0.0
+                laser['vy'] = 0.0
+                laser['has_collided'] = True
+
+                new_lasers.append({
+                    'p1': (hit_x + rx * 2.0, hit_y + ry * 2.0),
+                    'p2': (hit_x + rx * 155.0, hit_y + ry * 155.0),
+                    'color': laser.get('color', (255, 255, 255)),
+                    'heat': 0,
+                    'active': True,
+                    'vx': rx * speed,
+                    'vy': ry * speed,
+                    'life': laser.get('life', 25)
+                })
+
+        elif stype == 'Cylinder':   
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
+
+            new_lasers.append({
+                'p1': (cx, cy - r - 5),
+                'p2': (cx, cy - r - 155),
+                'color': laser.get('color', (255, 255, 255)), 
+                'heat': 0, 'active': True,
+                'vx': 0, 'vy': -speed, 'life': laser.get('life', 25)
+            })
+            new_lasers.append({
+                'p1': (cx, cy + r + 5),
+                'p2': (cx, cy + r + 155),
+                'color': laser.get('color', (255, 255, 255)), 
+                'heat': 0, 'active': True,
+                'vx': 0, 'vy': speed, 'life': laser.get('life', 25)
+            })
+
+        elif stype == 'Sphere':     
             shape['glowing'] = True
+            self.sphere_state['water_level'] = min(150.0, self.sphere_state['water_level'] + 4.0)
+            laser['p2'] = (hit_x, hit_y)
+            laser['vx'] = 0.0
+            laser['vy'] = 0.0
+            laser['has_collided'] = True
 
     def _point_line_dist(self, pt: tuple, start: tuple, end: tuple) -> float:
         px, py = pt
@@ -224,6 +339,7 @@ class ScenePhysicsEngine:
 #  HOLOGRAM EFFECT
 # ================================================================
 class HologramEffect:
+
     def __init__(self):
         self.font = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -239,8 +355,6 @@ class HologramEffect:
 
         # State trackers
         self.frame_count = 0
-        self.bg_cache    = None
-        self.particles   = None
 
         self.ui_items = [
             "Box", "Sphere", "Pyramid",
@@ -256,6 +370,14 @@ class HologramEffect:
         # Initialize the physics engine
         self.physics = ScenePhysicsEngine()
 
+        # --- Mask State ---
+        # Start fully deployed: flip 0.0 = mask down/on, 1.0 = mask up/retracted
+        self.mask_enabled       = False
+        self.mask_toggle_start  = 0.0
+        self.mask_flip_progress: float = 1.0   # 0 = fully deployed, 1 = fully retracted
+        self.mask_is_flipping:   bool  = False
+        self.mask_flip_direction: str  = 'down'  # 'down' to deploy, 'up' to retract
+
     @staticmethod
     def _new_hand_state():
         return dict(
@@ -269,70 +391,190 @@ class HologramEffect:
         )
 
     # ================================================================
-    #  BACKGROUND
+    #  SCI-FI AR VISOR
     # ================================================================
 
-    def _draw_cyber_grid_base(self, h, w):
-        bg = np.zeros((h, w, 3), dtype=np.float32)
-        cx, cy = w // 2, int(h * 0.75)
-        Y, X = np.ogrid[:h, :w]
-        dist_from_center = np.sqrt((X - cx)**2 + (Y - cy)**2)
-        max_dist = np.sqrt(cx**2 + cy**2)
-        radial_gradient = 1 - (dist_from_center / max_dist)
-        bg[:, :, 0] = 45 * radial_gradient
-        bg[:, :, 1] = 15 * radial_gradient
-        bg[:, :, 2] =  5 * radial_gradient
-        bg = bg.astype(np.uint8)
-        horizon_y  = int(h * 0.4)
-        grid_color = (70, 40, 15)
-        for x in range(-w, w * 2, int(w * 0.08)):
-            cv2.line(bg, (cx, horizon_y), (x, h), grid_color, 1, cv2.LINE_AA)
-        for i in range(1, 16):
-            depth_ratio = (i / 15) ** 2.5
-            y = horizon_y + int((h - horizon_y) * depth_ratio)
-            cv2.line(bg, (0, y), (w, y), grid_color, max(1, int(2 * depth_ratio)), cv2.LINE_AA)
-        glow_layer = np.zeros_like(bg)
-        cv2.ellipse(glow_layer, (cx, cy), (int(w*0.3), int(h*0.05)), 0, 0, 360, (255, 120, 0), -1)
-        glow_layer = cv2.GaussianBlur(glow_layer, (151, 151), 0)
-        intense_glow = np.zeros_like(bg)
-        cv2.ellipse(intense_glow, (cx, cy), (int(w*0.15), int(h*0.02)), 0, 0, 360, (255, 230, 120), -1)
-        intense_glow = cv2.GaussianBlur(intense_glow, (41, 41), 0)
-        bg = cv2.add(bg, glow_layer)
-        bg = cv2.add(bg, intense_glow)
-        cv2.ellipse(bg, (cx, cy), (int(w*0.25), int(h*0.04)), 0, 0, 360, (255, 200, 50), 2, cv2.LINE_AA)
-        axes = (int(w*0.35), int(h*0.06))
-        for angle in range(0, 360, 15):
-            cv2.ellipse(bg, (cx, cy), axes, 0, angle, angle + 8, (255, 150, 20), 2, cv2.LINE_AA)
-        return bg
+    def _draw_visor(self, img, face_lms, w, h):
+        """
+        Draws a sleek, cyberpunk-style visor over the eyes.
+        Uses vector tracking so it perfectly scales and tilts with the head.
+        Animates by sliding down from the forehead.
+        """
+        if face_lms is None or len(face_lms) < 455:
+            return img
 
-    def _update_particles(self, h, w):
-        if self.particles is None:
-            self.particles = np.zeros((40, 5))
-            self.particles[:, 0] = np.random.randint(0, w, 40)
-            self.particles[:, 1] = np.random.randint(0, h, 40)
-            self.particles[:, 2] = np.random.uniform(0.5, 2.0, 40)
-            self.particles[:, 3] = np.random.uniform(1, 3, 40)
-        self.particles[:, 1] -= self.particles[:, 2]
-        off_screen = self.particles[:, 1] < 0
-        self.particles[off_screen, 1] = h
-        self.particles[off_screen, 0] = np.random.randint(0, w, np.sum(off_screen))
-        pulse = (np.sin(self.frame_count * 0.1) + 1) / 2
-        self.particles[:, 4] = 120 + 135 * pulse
+        # ── 1. Establish Local Face Coordinate System (3D Tracking) ────────
+        def get_pt(idx):
+            return np.array([face_lms[idx][0] * w, face_lms[idx][1] * h])
 
-    def _get_dynamic_background(self, h, w):
-        if self.bg_cache is None or self.bg_cache.shape[:2] != (h, w):
-            self.bg_cache = self._draw_cyber_grid_base(h, w)
-        final_bg   = self.bg_cache.copy()
-        scanline_y = int((self.frame_count * 3) % h)
-        cv2.line(final_bg, (0, scanline_y), (w, scanline_y), (80, 40, 10), 1)
-        breathe  = 0.96 + 0.04 * np.sin(self.frame_count * 0.05)
-        final_bg = cv2.convertScaleAbs(final_bg, alpha=breathe)
-        self._update_particles(h, w)
-        for p in self.particles:
-            x, y, _, size, bright = int(p[0]), int(p[1]), p[2], int(p[3]), int(p[4])
-            color = (bright, int(bright*0.7), int(bright*0.2))
-            cv2.circle(final_bg, (x, y), size, color, -1, cv2.LINE_AA)
-        return final_bg
+        chin        = get_pt(152)
+        top         = get_pt(10)
+        left_cheek  = get_pt(234)
+        right_cheek = get_pt(454)
+        bridge      = get_pt(168)  # Anchor point exactly between the eyes
+
+        # Vertical vector (Tracks Pitch + Roll)
+        vec_y = chin - top
+        face_h = np.linalg.norm(vec_y)
+        if face_h < 1: face_h = 1
+        dir_y = vec_y / face_h
+
+        # Horizontal vector (Tracks Yaw + Roll)
+        vec_x = right_cheek - left_cheek
+        face_w = np.linalg.norm(vec_x)
+        if face_w < 1: face_w = 1
+        dir_x = vec_x / face_w
+
+        flip = self.mask_flip_progress   # 0.0 = deployed over eyes, 1.0 = retracted
+
+        if flip >= 1.0:
+            return img
+
+        # The visor slides up into the forehead when retracted
+        slide_offset = -flip * (face_h * 0.35)
+
+        # Helper: Maps idealized 0..1 visor coordinates to exact face pixels
+        def P(rx, ry):
+            dx = (rx - 0.5) * (face_w * 1.15)  # 1.15 makes it slightly wider than the face
+            dy = ry * face_h
+            p = bridge + dir_x * dx + dir_y * (dy + slide_offset)
+            return (int(p[0]), int(p[1]))
+
+        # ── 2. VISOR SHAPE (Octagonal / Cyberpunk cut) ─────────────────────
+        visor_poly = np.array([
+            P(0.05, -0.06),  # Top-Left (temple)
+            P(0.95, -0.06),  # Top-Right (temple)
+            P(0.90,  0.08),  # Bottom-Right (cheekbone)
+            P(0.65,  0.08),  # Right under-eye
+            P(0.55,  0.02),  # Right nose bridge
+            P(0.45,  0.02),  # Left nose bridge
+            P(0.35,  0.08),  # Left under-eye
+            P(0.10,  0.08),  # Bottom-Left (cheekbone)
+        ], np.int32)
+
+        # ── 3. TINTED GLASS EFFECT ─────────────────────────────────────────
+        C_GLASS = (30, 15, 10)  # Dark, slightly blue-tinted glass background
+        C_GLOW  = self.holo_blue
+        C_BRIGHT = (255, 255, 255)
+
+        # Create a mask for just the visor area
+        mask_visor = np.zeros(img.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(mask_visor, [visor_poly], 255)
+
+        # Darken and tint the camera feed specifically behind the visor
+        glass_overlay = np.zeros_like(img)
+        glass_overlay[:] = C_GLASS
+        tinted_bg = cv2.addWeighted(img, 0.4, glass_overlay, 0.6, 0)
+        
+        # Apply the tint only where the visor is
+        mask_bool = mask_visor > 0
+        img[mask_bool] = tinted_bg[mask_bool]
+
+        # ── 4. HUD ELEMENTS AND GLOW ───────────────────────────────────────
+        edges = np.zeros_like(img)
+
+        # Outer rim
+        cv2.polylines(edges, [visor_poly], True, C_GLOW, 2, cv2.LINE_AA)
+
+        # Center HUD reticle / "Camera Core" on the bridge of the nose
+        core = P(0.50, -0.01)
+        cv2.circle(edges, core, int(face_w * 0.035), C_GLOW, -1, cv2.LINE_AA)
+        cv2.circle(edges, core, int(face_w * 0.015), C_BRIGHT, -1, cv2.LINE_AA)
+
+        # Sweeping scanner line (moves up and down)
+        scan_y = math.sin(self.frame_count * 0.15) * 0.06 + 0.01
+        scan_L = P(0.12, scan_y)
+        scan_R = P(0.88, scan_y)
+        cv2.line(edges, scan_L, scan_R, C_BRIGHT, 1, cv2.LINE_AA)
+
+        # ── 5. COMPOSITE ───────────────────────────────────────────────────
+        # Fade the HUD elements based on the flip state (fades out as it slides up)
+        alpha = 1.0 - flip
+        pulse = 0.7 + 0.3 * math.sin(self.frame_count * 0.1)
+        
+        edges_glow = cv2.GaussianBlur(edges, (15, 15), 0)
+        
+        # Blend the hard edges and the soft glow onto the main image
+        img = cv2.addWeighted(img, 1.0, edges, alpha, 0)
+        img = cv2.addWeighted(img, 1.0, edges_glow, alpha * pulse * 0.8, 0)
+
+        return img
+    # ================================================================
+    #  MASK TOGGLE GESTURE  (triggers the flip animation)
+    # ================================================================
+
+    def _check_mask_toggle(self, img, left_lms, right_lms, face_lms, w, h):
+        """Checks if either hand is pinching at the nose bridge OR ears to trigger the mask flip."""
+        # Increased to 455 to ensure ear landmarks exist in the array
+        if face_lms is None or len(face_lms) < 455: 
+            if self.mask_toggle_start > 0 and self.mask_toggle_start <= time.time():
+                self.mask_toggle_start = 0
+            return img
+
+        # Target Landmarks: 168 (Nose Bridge), 162/234 (Left Ear area), 389/454 (Right Ear area)
+        trigger_indices = [168, 162, 234, 389, 454]
+        trigger_points = [(face_lms[idx][0] * w, face_lms[idx][1] * h) for idx in trigger_indices]
+
+        valid_pinch = False
+        pinch_x, pinch_y = 0, 0
+
+        # Check both hands
+        for hand_lms in [right_lms, left_lms]:
+            if hand_lms is not None and len(hand_lms) > 0:
+                if self._is_pinching(hand_lms, w, h):
+                    # Use the midpoint between the thumb (4) and index finger (8)
+                    px = (hand_lms[4][0] + hand_lms[8][0]) / 2.0 * w
+                    py = (hand_lms[4][1] + hand_lms[8][1]) / 2.0 * h
+                    
+                    # Threshold for "near the target" (8% of screen width to cover "around" the ears)
+                    threshold = w * 0.08 
+                    
+                    for tx, ty in trigger_points:
+                        dist = math.hypot(px - tx, py - ty)
+                        if dist < threshold:
+                            valid_pinch = True
+                            pinch_x, pinch_y = px, py
+                            break # Found a valid trigger point
+                    
+                    if valid_pinch:
+                        break # Stop checking the other hand
+
+        if valid_pinch:
+            now = time.time()
+
+            if self.mask_toggle_start == 0:
+                self.mask_toggle_start = now          # start charge-up
+            elif self.mask_toggle_start > now:
+                pass                                  # in cooldown — ignore
+            else:
+                elapsed  = now - self.mask_toggle_start
+                progress = min(1.0, elapsed / 0.7)
+
+                # Draw a sleek charge-up arc around the pinch point
+                cv2.ellipse(img,
+                            (int(pinch_x), int(pinch_y)), (30, 30),
+                            -90, 0, int(360 * progress),
+                            (0, 255, 255), 3, cv2.LINE_AA)
+
+                label = "DEPLOYING..." if self.mask_flip_progress > 0.5 else "RETRACTING..."
+                cv2.putText(img, label,
+                            (int(pinch_x) - 40, int(pinch_y) + 48),
+                            self.font, 0.38, (0, 255, 255), 1, cv2.LINE_AA)
+
+                if elapsed >= 0.7 and not self.mask_is_flipping:
+                    # Decide direction based on current mask position
+                    if self.mask_flip_progress > 0.5:
+                        self.mask_flip_direction = 'down'   # deploy
+                    else:
+                        self.mask_flip_direction = 'up'     # retract
+                    self.mask_is_flipping   = True
+                    self.mask_toggle_start  = now + 2.0     # 2-second cooldown
+        else:
+            # Reset timer if neither hand is pinching at a valid target
+            if self.mask_toggle_start > 0 and self.mask_toggle_start <= time.time():
+                self.mask_toggle_start = 0
+
+        return img
 
     # ================================================================
     #  PERSON HOLOGRAM 
@@ -473,8 +715,7 @@ class HologramEffect:
 
         try:
             sub   = target_img[tl[1]:br[1], tl[0]:br[0]]
-            glass = np.full_like(sub, (25, 12, 0), dtype=np.uint8)
-            target_img[tl[1]:br[1], tl[0]:br[0]] = cv2.add(sub, glass)
+            target_img[tl[1]:br[1], tl[0]:br[0]] = cv2.add(sub, 0.15, glass, 0.95)
         except Exception:
             pass
 
@@ -526,8 +767,6 @@ class HologramEffect:
 
             if bg_color:
                 try:
-                    ovr = target_img[i_tl[1]:i_br[1], i_tl[0]:i_br[0]]
-                    hl  = np.full_like(ovr, bg_color, dtype=np.uint8)
                     target_img[i_tl[1]:i_br[1], i_tl[0]:i_br[0]] = cv2.add(ovr, hl)
                 except Exception:
                     pass
@@ -544,7 +783,7 @@ class HologramEffect:
 
             if is_hovered and is_pinching and hs['pinch_start'] > 0:
                 elapsed  = time.time() - hs['pinch_start']
-                progress = min(1.0, elapsed / 1.5)
+                progress = min(1.0, elapsed / 0.7)
                 arc_cx   = i_br[0] - 12
                 arc_cy   = i_tl[1] + item_h // 2
                 cv2.ellipse(target_img, (arc_cx, arc_cy), (9,9),
@@ -556,7 +795,7 @@ class HologramEffect:
             if hs['hovered_item_index'] != currently_hovered:
                 hs['hovered_item_index'] = currently_hovered
                 hs['pinch_start']        = time.time()
-            elif time.time() - hs['pinch_start'] >= 1.5:
+            elif time.time() - hs['pinch_start'] >= 0.7:
                 hs['selected_object']    = self.ui_items[currently_hovered]
                 hs['panel_open']         = False 
                 hs['pinch_start']        = 0
@@ -566,6 +805,66 @@ class HologramEffect:
             hs['hovered_item_index'] = -1
 
         return target_img
+
+    def _draw_iron_man_glove(self, img, lms, w, h, side):
+        if lms is None or len(lms) == 0: return img
+        # --- Iron Man Palette (BGR format) ---
+        armor_red = (40, 40, 200)    
+        armor_gold = (50, 200, 255)  
+        repulsor_cyan = (255, 255, 200)
+        shadow_red = (15, 15, 120)
+
+        # Convert normalized LMS to pixel coordinates
+        pts = [(int(lm[0]*w), int(lm[1]*h)) for lm in lms]
+        overlay = np.zeros_like(img)
+
+        # 1. Draw the Palm / Back-of-hand Plate
+        palm_pts = np.array([pts[0], pts[17], pts[13], pts[9], pts[5]], np.int32)
+        
+        # Fill plate and add golden trim
+        cv2.fillPoly(overlay, [palm_pts], shadow_red)
+        cv2.polylines(overlay, [palm_pts], True, armor_gold, 2, cv2.LINE_AA)
+
+        # 2. Draw Finger Mechanical Segments
+        fingers = [
+            (1, 2, 3, 4),       # Thumb
+            (5, 6, 7, 8),       # Index
+            (9, 10, 11, 12),    # Middle
+            (13, 14, 15, 16),   # Ring
+            (17, 18, 19, 20)    # Pinky
+        ]
+
+        for finger in fingers:
+            for i in range(len(finger) - 1):
+                p1, p2 = pts[finger[i]], pts[finger[i+1]]
+                
+                # Outer armor shell (Thick Red)
+                cv2.line(overlay, p1, p2, armor_red, 12, cv2.LINE_AA)
+                # Inner mechanical skeleton (Thin Gold)
+                cv2.line(overlay, p1, p2, armor_gold, 3, cv2.LINE_AA)
+                # Joint nodes
+                cv2.circle(overlay, p1, 5, armor_gold, -1, cv2.LINE_AA)
+
+            # Emitter nodes at fingertips
+            cv2.circle(overlay, pts[finger[-1]], 6, repulsor_cyan, -1, cv2.LINE_AA)
+
+        # 3. Draw the Main Palm Repulsor
+        cx = sum([p[0] for p in palm_pts]) // 5
+        cy = sum([p[1] for p in palm_pts]) // 5
+
+        if self._is_palm_open(lms):
+            pulse = int(18 + 5 * math.sin(self.frame_count * 0.3))
+            cv2.circle(overlay, (cx, cy), pulse, repulsor_cyan, -1, cv2.LINE_AA)
+            cv2.circle(overlay, (cx, cy), pulse + 6, armor_gold, 2, cv2.LINE_AA)
+        else:
+            cv2.circle(overlay, (cx, cy), 12, armor_gold, -1, cv2.LINE_AA)
+
+        # 4. Composite with Glow Magic
+        glow = cv2.GaussianBlur(overlay, (15, 15), 0)
+        img = cv2.addWeighted(img, 1.0, overlay, 0.85, 0)
+        img = cv2.addWeighted(img, 1.0, glow, 0.6, 0)
+
+        return img
 
     # ================================================================
     #  3-D WIREFRAME 
@@ -632,17 +931,12 @@ class HologramEffect:
 
         overlay = np.zeros_like(img)
 
-        # Handle glowing state and water levels from physics engine
         current_holo_blue = self.holo_blue
         pulse_r = int(14 + 4 * math.sin(self.frame_count * 0.12))
 
         if glowing:
             current_holo_blue = (min(255, self.holo_blue[0]+100), min(255, self.holo_blue[1]+100), min(255, self.holo_blue[2]+100))
             pulse_r += 10
-            
-        if shape == "Sphere" and water_level > 0:
-            water_r = int((radius * 0.9) * (water_level / 100.0))
-            cv2.circle(overlay, (cx, cy), water_r, (255, 120, 50), -1, cv2.LINE_AA)
 
         beam_color = (current_holo_blue[0]//4, current_holo_blue[1]//4, current_holo_blue[2]//4)
         cv2.circle(overlay, (palm_cx, palm_cy), pulse_r, current_holo_blue, 2, cv2.LINE_AA)
@@ -658,13 +952,17 @@ class HologramEffect:
         for pt in pts:
             cv2.circle(overlay, pt, 3, (255,255,255), -1, cv2.LINE_AA)
 
+        if shape == "Sphere" and water_level > 0:
+            solid_r = int(radius * (water_level / 100.0))
+            cv2.circle(overlay, (cx, cy), solid_r, current_holo_blue, -1, cv2.LINE_AA)
+            if solid_r > 12:
+                cv2.circle(overlay, (cx, cy), int(solid_r * 0.7), (255, 255, 255), -1, cv2.LINE_AA)
+
         y_idx   = np.arange(img.shape[0], dtype=np.float32).reshape(-1, 1)
         scan    = 0.72 + 0.28 * np.sin(y_idx * 0.65 - self.frame_count * 0.42)
         overlay = (overlay.astype(np.float32) * scan[:,:,None]).astype(np.uint8)
 
-        # FAST DOWNSCALE-BLUR-UPSCALE 
         h_ov, w_ov = overlay.shape[:2]
-        
         glow1 = cv2.GaussianBlur(overlay, (7, 7), 0)
         
         small_ov2 = cv2.resize(overlay, (w_ov // 2, h_ov // 2), interpolation=cv2.INTER_LINEAR)
@@ -696,28 +994,61 @@ class HologramEffect:
         for l in lasers:
             start_pt = (int(l['p1'][0]), int(l['p1'][1]))
             end_pt = (int(l['p2'][0]), int(l['p2'][1]))
-            color = l['color']
-            thickness = 8 + int(l['heat'] / 30) # Lasers get thicker as they heat up
             
-            cv2.line(overlay, start_pt, end_pt, (255,255,255), 2, cv2.LINE_AA)
-            cv2.line(overlay, start_pt, end_pt, color, thickness, cv2.LINE_AA)
+            base_color = l['color']
+            heat = l.get('heat', 0)
             
+            thickness = 8 + int((heat / 255.0) * 20) 
             dist = math.hypot(end_pt[0]-start_pt[0], end_pt[1]-start_pt[1])
-            if dist > 1:
-                dx = (end_pt[0]-start_pt[0]) / dist
-                dy = (end_pt[1]-start_pt[1]) / dist
-                step = max(8, int(dist/50))
-                for i in range(0, int(dist), step):
-                    px = start_pt[0] + dx * i
-                    py = start_pt[1] + dy * i
-                    swirl_x = math.cos(i*0.1 + time_offset) * 15
-                    swirl_y = math.sin(i*0.1 + time_offset) * 15
-                    nx, ny = -dy, dx
-                    fx = int(px + nx * swirl_x)
-                    fy = int(py + ny * swirl_y)
-                    if 0 <= fx < w and 0 <= fy < h:
-                        cv2.circle(overlay, (fx, fy), 2, (255,255,255), -1)
-                        cv2.circle(overlay, (fx, fy), 5, color, -1)
+            
+            if dist <= 1:
+                continue
+
+            dx = (end_pt[0]-start_pt[0]) / dist
+            dy = (end_pt[1]-start_pt[1]) / dist
+
+            if heat > 50:
+                segment_len = 5 
+                for i in range(0, int(dist), segment_len):
+                    pA = (int(start_pt[0] + dx * i), int(start_pt[1] + dy * i))
+                    pB = (int(start_pt[0] + dx * min(i+segment_len, dist)), int(start_pt[1] + dy * min(i+segment_len, dist)))
+                    
+                    hue = int((i * 1.5 - self.frame_count * 10) % 180)
+                    hsv = np.uint8([[[hue, 255, 255]]])
+                    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0][0]
+                    spectrum_color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+                    
+                    cv2.line(overlay, pA, pB, (255,255,255), 2, cv2.LINE_AA)
+                    cv2.line(overlay, pA, pB, spectrum_color, thickness, cv2.LINE_AA)
+            else:
+                color = (
+                    min(255, base_color[0] + heat),
+                    min(255, base_color[1] + heat),
+                    min(255, base_color[2] + heat)
+                )
+                cv2.line(overlay, start_pt, end_pt, (255,255,255), 2, cv2.LINE_AA)
+                cv2.line(overlay, start_pt, end_pt, color, thickness, cv2.LINE_AA)
+            
+            step = max(8, int(dist/50))
+            for i in range(0, int(dist), step):
+                swirl_radius = 15 + int((heat / 255.0) * 15)
+                swirl_x = math.cos(i*0.1 + time_offset + (heat/50.0)) * swirl_radius
+                swirl_y = math.sin(i*0.1 + time_offset + (heat/50.0)) * swirl_radius
+                
+                nx, ny = -dy, dx
+                fx = int(start_pt[0] + dx * i + nx * swirl_x)
+                fy = int(start_pt[1] + dy * i + ny * swirl_y)
+                
+                if 0 <= fx < w and 0 <= fy < h:
+                    cv2.circle(overlay, (fx, fy), 2, (255,255,255), -1)
+                    if heat > 50:
+                        hue = int((i * 1.5 - self.frame_count * 10) % 180)
+                        bgr = cv2.cvtColor(np.uint8([[[hue, 255, 255]]]), cv2.COLOR_HSV2BGR)[0][0]
+                        pt_color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+                    else:
+                        pt_color = color
+                        
+                    cv2.circle(overlay, (fx, fy), 5, pt_color, -1)
                         
         glow = cv2.GaussianBlur(overlay, (21, 21), 0)
         img  = cv2.add(img, overlay)
@@ -781,25 +1112,21 @@ class HologramEffect:
                                 ('left',  lhs,    w - 14 - BAR_LEN)]:
             now = time.time()
             if not hs['ui_active'] and hs['palm_open_start'] > 0:
-                prog   = min(1.0, (now - hs['palm_open_start']) / 5.0)
+                prog   = min(1.0, (now - hs['palm_open_start']) / 1.5) 
                 filled = int(BAR_LEN * prog)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+BAR_LEN, BAR_Y+BAR_TH), (40,30,10), -1)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+filled,  BAR_Y+BAR_TH), (0,200,170), -1)
                 cv2.putText(img, f"{'L' if side=='left' else 'R'} OPEN {int(prog*100)}%",
                             (bar_x, BAR_Y+BAR_TH+12), self.font, 0.30, (0,200,170), 1, cv2.LINE_AA)
             elif hs['ui_active'] and hs['fist_closed_start'] > 0:
-                prog   = min(1.0, (now - hs['fist_closed_start']) / 5.0)
+                prog   = min(1.0, (now - hs['fist_closed_start']) / 1.5) 
                 filled = int(BAR_LEN * prog)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+BAR_LEN, BAR_Y+BAR_TH), (20,10,30), -1)
                 cv2.rectangle(img, (bar_x, BAR_Y), (bar_x+filled,  BAR_Y+BAR_TH), (0,60,220), -1)
-                cv2.putText(img, f"{'L' if side=='left' else 'R'} OFF {int(prog*100)}%",
+                cv2.putText(img, f"{'R' if side=='left' else 'L'} OFF {int(prog*100)}%",
                             (bar_x, BAR_Y+BAR_TH+12), self.font, 0.30, (0,80,240), 1, cv2.LINE_AA)
 
         return img
-
-    # ================================================================
-    #  PER-HAND GESTURE STATE UPDATE
-    # ================================================================
 
     def _update_hand_state(self, lms, side, h, w):
         hs  = self.hand_state[side]
@@ -816,7 +1143,7 @@ class HologramEffect:
         if palm_open and not hs['ui_active'] and not fist:
             if hs['palm_open_start'] == 0:
                 hs['palm_open_start'] = now
-            elif now - hs['palm_open_start'] >= 5.0:
+            elif now - hs['palm_open_start'] >= 1.5:
                 hs['ui_active']       = True
                 hs['panel_open']      = True  
                 hs['palm_open_start'] = 0
@@ -826,7 +1153,7 @@ class HologramEffect:
         if fist and hs['ui_active']:
             if hs['fist_closed_start'] == 0:
                 hs['fist_closed_start'] = now
-            elif now - hs['fist_closed_start'] >= 5.0:
+            elif now - hs['fist_closed_start'] >= 1.5:
                 hs['ui_active']         = False
                 hs['panel_open']        = False
                 hs['selected_object']   = None
@@ -842,10 +1169,78 @@ class HologramEffect:
         self.frame_count += 1
         h, w = frame.shape[:2]
 
-        # 1. Background
-        output = self._get_dynamic_background(h, w)
+        # 1. Base Frame
+        output = frame.copy()
 
-        # 2. Hologram person
+        # Extract Tracking Data
+        left_lms  = getattr(tracking_data, 'left_hand_landmarks',  None) if tracking_data else None
+        right_lms = getattr(tracking_data, 'right_hand_landmarks', None) if tracking_data else None
+        face_lms  = getattr(tracking_data, 'face_landmarks', None) if tracking_data else None
+
+        # ── 2. Advance mask flip animation (~18 frames ≈ 0.6s at 30 fps) ───────────
+        if self.mask_is_flipping:
+            flip_speed = 0.048
+            if self.mask_flip_direction == 'down':
+                self.mask_flip_progress = max(0.0, self.mask_flip_progress - flip_speed)
+                if self.mask_flip_progress == 0.0:
+                    self.mask_is_flipping = False
+            else:  # 'up'
+                self.mask_flip_progress = min(1.0, self.mask_flip_progress + flip_speed)
+                if self.mask_flip_progress == 1.0:
+                    self.mask_is_flipping = False
+                    
+        # HUD is active while mask is more than halfway down
+        self.mask_enabled = (self.mask_flip_progress < 0.5)
+
+        # ── 3. Mask toggle gesture (either hand) ─────────────────────────────────
+        output = self._check_mask_toggle(output, left_lms, right_lms, face_lms, w, h)
+        if not self.mask_toggle_start:
+           output = self._check_mask_toggle(output, left_lms, right_lms, face_lms, w, h)
+        # ── 4. ALWAYS draw the Visor (must be visible to see retract animation) ──
+        output = self._draw_visor(output, face_lms, w, h)
+
+        # ── 5. Standby overlay when mask is retracted ────────────────────────────
+        if not self.mask_enabled:
+            # Updated text to match the new pinch gesture
+            cv2.putText(output,
+                        "SYSTEM STANDBY  |  GLASSES NOT DETECTED",
+                        (10, h - 20), self.font, 0.4, (150, 150, 150), 1, cv2.LINE_AA)
+            
+            # Wipe UI/Hand states so nothing accidentally triggers or remains selected
+            for side in ('left', 'right'):
+                self.hand_state[side].update({
+                    'ui_active': False,
+                    'panel_open': False,
+                    'palm_open_start': 0,
+                    'fist_closed_start': 0,
+                    'selected_object': None,
+                    'pinch_start': 0,
+                    'hovered_item_index': -1
+                })
+                
+            # Status strip still visible in standby so the user gets feedback
+            output = self._draw_status_and_loading(output, h, w)
+            return output  # <--- EARLY RETURN KILLS ALL UI/HOLOGRAMS/GLOVES
+
+        # ================================================================
+        #  HUD AND HOLOGRAM LOGIC (only runs when mask is down)
+        # ================================================================
+
+        # ── 6. Draw Iron Man Gloves ──────────────────────────────────────────────
+        output = self._draw_iron_man_glove(output, left_lms,  w, h, 'left')
+        output = self._draw_iron_man_glove(output, right_lms, w, h, 'right')
+
+        # ── 7. Update hand gesture states ────────────────────────────────────────
+        self._update_hand_state(left_lms,  'left',  h, w)
+        self._update_hand_state(right_lms, 'right', h, w)
+
+        # ── 8. UI Panels ─────────────────────────────────────────────────────────
+        if self.hand_state['left']['panel_open']:
+            output = self._draw_main_ui(output, left_lms,  h, w, side='left')
+        if self.hand_state['right']['panel_open']:
+            output = self._draw_main_ui(output, right_lms, h, w, side='right')
+
+        # ── 9. Hologram Person Filter ────────────────────────────────────────────
         if tracking_data and getattr(tracking_data, 'has_person', False):
             raw_mask = getattr(tracking_data, 'segmentation_mask', None)
             if raw_mask is not None:
@@ -855,27 +1250,14 @@ class HologramEffect:
                 cleaned_mask = self._filter_segmentation(binary_mask)
                 holo_person  = self._create_hologram_person(frame, cleaned_mask, h, w)
                 breathe      = 0.7 + 0.1 * np.sin(self.frame_count * 0.1)
-                scaled_holo = cv2.convertScaleAbs(holo_person, alpha=breathe)
-                holo_masked = cv2.bitwise_and(scaled_holo, scaled_holo, mask=cleaned_mask)
-                output       = cv2.add(output, holo_masked)
+                scaled_holo  = cv2.convertScaleAbs(holo_person, alpha=breathe)
+                holo_masked  = cv2.bitwise_and(scaled_holo, scaled_holo, mask=cleaned_mask)
+                output        = cv2.add(output, holo_masked)
 
-        left_lms  = getattr(tracking_data, 'left_hand_landmarks',  None) if tracking_data else None
-        right_lms = getattr(tracking_data, 'right_hand_landmarks', None) if tracking_data else None
-
-        # 3. Update gesture state
-        self._update_hand_state(left_lms,  'left',  h, w)
-        self._update_hand_state(right_lms, 'right', h, w)
-
-        # 4. Draw UI panels
-        if self.hand_state['left']['panel_open']:
-            output = self._draw_main_ui(output, left_lms,  h, w, side='left')
-        if self.hand_state['right']['panel_open']:
-            output = self._draw_main_ui(output, right_lms, h, w, side='right')
-
-        # 5. Extract inputs for physics engine
-        hands_data = {}
+        # ── 10. Extract inputs for physics engine ────────────────────────────────
+        hands_data    = {}
         fired_bullets = []
-        fired_lasers = []
+        fired_lasers  = []
 
         for lms, side in [(left_lms, 'left'), (right_lms, 'right')]:
             hs  = self.hand_state[side]
@@ -891,9 +1273,9 @@ class HologramEffect:
                     bob_offset = math.sin(self.frame_count * 0.07) * 10
                     obj_cy = int((palm_cy - 200) + bob_offset)
                     hands_data[side] = {
-                        'type': obj, 
-                        'cx': palm_cx, 
-                        'cy': obj_cy, 
+                        'type': obj,
+                        'cx': palm_cx,
+                        'cy': obj_cy,
                         'r': 70.0,
                         'palm_cx': palm_cx,
                         'palm_cy': palm_cy
@@ -911,37 +1293,38 @@ class HologramEffect:
 
                         if obj == "Laser Beam":
                             fired_lasers.append({'p1': index_tip, 'p2': end, 'color': self.laser_blue})
-                            cv2.circle(output, index_tip, 4, (255,255,255), -1)
+                            cv2.circle(output, index_tip, 4, (255, 255, 255), -1)
                         else:
                             if self.frame_count % 4 == 0:
-                                fired_bullets.append({'x': index_tip[0], 'y': index_tip[1], 'vx': dx*30, 'vy': dy*30, 'life': 20})
+                                fired_bullets.append({'x': index_tip[0], 'y': index_tip[1],
+                                                      'vx': dx*30, 'vy': dy*30, 'life': 20})
                                 cv2.circle(output, index_tip, 6, self.gun_yellow, -1)
 
-        # 6. Step Physics
+        # ── 11. Step Physics ─────────────────────────────────────────────────────
         self.physics.register_input(hands_data, fired_bullets, fired_lasers)
         self.physics.update()
 
-        # 7. Render Physics State
+        # ── 12. Render Physics State ─────────────────────────────────────────────
         for side, shape_data in self.physics.shapes.items():
             if shape_data['type'] is not None:
-                glowing = shape_data.get('glowing', False)
-                water_level = self.physics.sphere_state['water_level'] if shape_data['type'] == 'Sphere' else 0.0
-                
+                glowing     = shape_data.get('glowing', False)
+                water_level = (self.physics.sphere_state['water_level']
+                               if shape_data['type'] == 'Sphere' else 0.0)
                 output = self._draw_3d_wireframe(
-                    output, 
-                    shape_data['type'], 
-                    int(shape_data['cx']), 
-                    int(shape_data['cy']), 
-                    int(shape_data['r']), 
-                    int(shape_data.get('palm_cx', shape_data['cx'])), 
+                    output,
+                    shape_data['type'],
+                    int(shape_data['cx']),
+                    int(shape_data['cy']),
+                    int(shape_data['r']),
+                    int(shape_data.get('palm_cx', shape_data['cx'])),
                     int(shape_data.get('palm_cy', shape_data['cy'])),
-                    glowing, 
+                    glowing,
                     water_level
                 )
         output = self._render_lasers(output, self.physics.lasers, h, w)
         output = self._render_bullets(output, self.physics.bullets)
 
-        # 8. Status strip + loading bars
+        # ── 13. Status strip ─────────────────────────────────────────────────────
         output = self._draw_status_and_loading(output, h, w)
 
         return output
