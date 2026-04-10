@@ -1,22 +1,15 @@
-"""
-main.py - Orchestrator for ArtCam.
-"""
-from cv2.gapi.core import cpu
 import argparse
 import sys
 import time
 import numpy as np
-import torch
 import cv2
 import asyncio
 import uvicorn
 import threading
 
 # Import trackers
-from tracker import PoseTracker
-from old_tracker import PoseTracker as MediaPipeTracker
+from old_tracker import PoseTracker
 from camera import CameraStream
-from model_engine import ArtGenerator
 from display import ScreenManager, ViewMode
 from filters import FilterEngine
 from server import app, manager
@@ -61,10 +54,7 @@ async def async_main(args=None):
     camera = CameraStream(source=args.camera, target_resolution=target_res)
     camera.start()
     
-    if tracker_type == "mediapipe":
-        tracker = MediaPipeTracker(device=cpu)
-    else:
-        tracker = PoseTracker(confidence=0.5, device=device)
+    tracker = PoseTracker(device="cpu")
     
     generator = None
     filter_engine = FilterEngine()
@@ -77,7 +67,7 @@ async def async_main(args=None):
     STYLIZE_SKIP_RATE = 2  # Process every Nth frame if neural style is active
     
     display = ScreenManager(window_name="ArtCam", show_debug=args.debug, fullscreen=args.fullscreen)
-    display.set_model_name("MediaPipe" if tracker_type == "mediapipe" else "YOLOv8m")
+    display.set_model_name("MediaPipe")
     
     # Map view mode
     mode_map = {
@@ -163,12 +153,11 @@ async def async_main(args=None):
             elif apply_stylize:
                 if "_cv" in stylize_mode:
                     first_person = None
-                    if tracker_type == "mediapipe" and tracking_data.has_person:
+                    if tracking_data.has_person:
                         class SimpleTracker: pass
                         first_person = SimpleTracker()
-                        first_person.landmarks = tracking_data.pose_landmarks
-                    elif isinstance(tracking_data, list) and len(tracking_data) > 0:
-                        first_person = tracking_data[0]
+                        # Need to provide face_landmarks for filters
+                        first_person.landmarks = tracking_data.face_landmarks
                     
                     if stylize_mode == "chibi_cv":
                         stylized_frame = filter_engine.apply_chibi_filter(frame, first_person)
@@ -179,19 +168,7 @@ async def async_main(args=None):
                     elif stylize_mode == "watercolor_cv":
                         stylized_frame = filter_engine.apply_watercolor_filter(frame, first_person)
                 else:
-                    # PyTorch Neural Models
-                    if generator is None or getattr(generator, 'model_type', None) != stylize_mode:
-                        if generator: generator.close()
-                        generator = ArtGenerator(model_path=None, input_size=(512,512), device=device, model_type=stylize_mode)
-                    
-                    # Frame skipping logic for heavy neural styles
-                    if last_stylized_frame is None or stylize_skip_count >= STYLIZE_SKIP_RATE:
-                        stylized_frame = generator.generate_with_compositing(frame, tracking_data)
-                        last_stylized_frame = stylized_frame.copy()
-                        stylize_skip_count = 0
-                    else:
-                        stylize_skip_count += 1
-                        stylized_frame = last_stylized_frame.copy() 
+                    print(f"[ArtCam] Warning: Neural style {stylize_mode} selected but GPU stylization is disabled.")
             
             # Handle wireframe overlay
             if is_wireframe:
@@ -206,11 +183,7 @@ async def async_main(args=None):
 
             # Metrics and Networking
             fps = int(1.0 / (time.time() - t_start)) if (time.time() - t_start) > 0 else 0
-            entities = 0
-            if tracker_type == "mediapipe":
-                entities = 1 if tracking_data.has_person else 0
-            else:
-                entities = len(tracking_data) if tracking_data else 0
+            entities = 1 if tracking_data.has_person else 0
 
             asyncio.create_task(manager.broadcast_frame(stylized_frame, {"fps": fps, "entities": entities}))
 

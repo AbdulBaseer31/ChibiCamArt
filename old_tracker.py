@@ -349,8 +349,8 @@ class PoseTracker:
         
         running_mode = vision.RunningMode.VIDEO
         
-        # Determine Delegate
-        delegate = python.BaseOptions.Delegate.GPU if device == "cuda" else python.BaseOptions.Delegate.CPU
+        # Determine Delegate (Forced CPU)
+        delegate = python.BaseOptions.Delegate.CPU
         print(f"[MediaPipeTracker] Using delegate: {delegate.name}")
 
         self.pose_landmarker = vision.PoseLandmarker.create_from_options(
