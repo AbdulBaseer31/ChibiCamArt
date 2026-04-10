@@ -14,7 +14,7 @@ from dot_field import DotGridEffect
 class FilterEngine:
     """
     Lightweight CPU-bound OpenCV Image Filtering Engine.
-    Simulates artistic styles like Anime, Ghibli, and Caricature/Chibi
+    Simulates artistic styles like Anime, Ghibli, and Caricature/Art
     using classic computer vision techniques instead of heavy neural networks.
     """
     def __init__(self):
@@ -236,7 +236,7 @@ class FilterEngine:
 
     def apply_chibi_filter(self, frame, tracking_data):
         """
-        Caricature/Chibi filter.
+        Caricature/Art filter.
         Uses tracking data to find the head and eyes.
         Enlarges the head slightly and enlarges the eyes drastically.
         Then applies a cartoon/anime color pass.

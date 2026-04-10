@@ -29,7 +29,6 @@ def parse_arguments():
     parser.add_argument("--view-mode", "-v", choices=["webcam_only", "wireframe_only", "matrix_only", "glitch_only", "terminal_only", "hologram_only", "dot_field_only"], default="webcam_only")
     parser.add_argument("--debug", "-d", action="store_true")
     parser.add_argument("--fullscreen", "-f", action="store_true")
-    parser.add_argument("--webview", "-w", action="store_true")
     parser.add_argument("--gpu", "-g", action="store_true", help="Force CUDA GPU acceleration (use when PyTorch CUDA is installed system-wide)")
     return parser.parse_args()
 
@@ -48,34 +47,15 @@ def select_camera():
 async def async_main(args=None):
     if args is None: args = parse_arguments()
     
-    # 1. Selection Menus
-    print("\n[1] MediaPipe (Detailed) | [2] YOLOv8m (Fast)")
-    tracker_type = "mediapipe" if input("Select tracker [1]: ") != "2" else "yolo"
-    
-    # GPU / CPU Selection
-    cuda_available = torch.cuda.is_available()
-    if args.gpu:
-        device = "cuda"
-        print(f"[ArtCam] GPU mode forced via --gpu flag")
-        if cuda_available:
-            print(f"[ArtCam] CUDA device: {torch.cuda.get_device_name(0)}")
-        else:
-            print(f"[ArtCam] WARNING: torch.cuda.is_available() returned False.")
-            print(f"[ArtCam] Attempting CUDA anyway (system-wide PyTorch CUDA).")
-    elif cuda_available:
-        print(f"\n[ArtCam] GPU detected: {torch.cuda.get_device_name(0)}")
-        print("[1] GPU (CUDA) | [2] CPU")
-        gpu_choice = input("Select device [1]: ").strip()
-        device = "cpu" if gpu_choice == "2" else "cuda"
-    else:
-        print("\n[ArtCam] No CUDA GPU detected. Running on CPU.")
-        print("[ArtCam] TIP: Use --gpu flag if PyTorch CUDA is installed system-wide.")
-        device = "cpu"
+    # Force MediaPipe and CPU as requested
+    tracker_type = "mediapipe"
+    device = "cpu"
     
     print(f"[ArtCam] Using device: {device.upper()}")
     manager.settings["device"] = device
     
-    if args.camera is None: args.camera = select_camera()
+    if args.camera is None: 
+        args.camera = 1  # Default to camera 1 to skip prompt
     
     # 2. Init Hardware/Modules
     target_res = (640, 480)
@@ -240,12 +220,17 @@ async def async_main(args=None):
             if not display.render(stylized_frame=stylized_frame, original_frame=frame, tracking_overlay=tracking_vis):
                 break
             
-            # HANDLE INPUT EVENTS (Processed from the nested menu state machine)
             if hasattr(display, '_last_key_result') and display._last_key_result:
                 if display._last_key_result == 'toggle_pookie':
                     current_state = manager.settings.get("pookieMode", False)
                     manager.settings["pookieMode"] = not current_state
                     print(f"[Main] Toggled Ribbon via keyboard: {not current_state}")
+                elif str(display._last_key_result).startswith('set_cam_'):
+                    cam_idx = int(display._last_key_result.split('_')[-1])
+                    print(f"[Main] Switching to camera {cam_idx}")
+                    camera.stop()
+                    camera = CameraStream(source=cam_idx, target_resolution=target_res)
+                    camera.start()
                 
                 # Reset key state
                 display._last_key_result = None
@@ -260,9 +245,6 @@ async def async_main(args=None):
 
 def main():
     args = parse_arguments()
-    if args.webview:
-        import webbrowser
-        threading.Timer(2.0, lambda: webbrowser.open('http://localhost:8000')).start()
     asyncio.run(async_main(args))
 
 if __name__ == "__main__":

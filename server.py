@@ -5,7 +5,6 @@ import json
 import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from typing import Set
 
 logger = logging.getLogger(__name__)
@@ -101,9 +100,4 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket Error: {e}")
         manager.disconnect(websocket)
 
-import os
-# Serve frontend if available
-if os.path.exists("dist"):
-    app.mount("/", StaticFiles(directory="dist", html=True), name="static")
-else:
-    logger.warning("Frontend 'dist' directory not found. Serving API only.")
+# Frontend has been removed; serving WebSocket API only.

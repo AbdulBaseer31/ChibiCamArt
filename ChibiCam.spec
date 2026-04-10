@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('dist', 'dist'), ('yolo26m-pose.pt', '.'), ('yolov8m-pose.pt', '.'), ('yolov8n.pt', '.'), ('pose_landmarker_full.task', '.'), ('pose_landmarker_lite.task', '.'), ('style05.safetensors', '.')],
+    datas=[('yolo26m-pose.pt', '.'), ('yolov8m-pose.pt', '.'), ('yolov8n.pt', '.'), ('pose_landmarker_full.task', '.'), ('pose_landmarker_lite.task', '.'), ('style05.safetensors', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

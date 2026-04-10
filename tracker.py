@@ -10,6 +10,7 @@ import torch
 from typing import Optional, Tuple, List, Any
 from dataclasses import dataclass
 from ultralytics import YOLO
+from utils import resource_path
 
 @dataclass
 class TrackingData:
@@ -39,7 +40,7 @@ class PoseTracker:
         
         # Loading yolo26m-pose (Medium)
         print("[PoseTracker] Loading yolo26m-pose model...")
-        self.model = YOLO('yolo26m-pose.pt')
+        self.model = YOLO(resource_path('yolo26m-pose.pt'))
         self.model.to(self.device)  # <--- FORCED CUDA
         
         # COCO Connections (17 keypoints)

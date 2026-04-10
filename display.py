@@ -32,6 +32,7 @@ class MenuState(Enum):
     INTERACTIVE = auto()
     FILTERS = auto()
     PROPS = auto()
+    CAMERA_SELECT = auto()
 
 
 class ScreenManager:
@@ -62,6 +63,7 @@ class ScreenManager:
         self._is_running = False
         self.menu_state = MenuState.MAIN
         self.view_mode: ViewMode = ViewMode.WIREFRAME_ONLY
+        self.show_ui = False
         
         # Performance tracking (kept for logic, but not displayed)
         self._frame_times: deque[float] = deque(maxlen=30)
@@ -237,6 +239,7 @@ class ScreenManager:
                 "1: Interactive Filters", 
                 "2: Filters", 
                 "3: Props",
+                "L: Select Camera",
                 "C: Clear (Webcam)",
                 "Q/ESC: Quit"
             ]
@@ -251,6 +254,9 @@ class ScreenManager:
         
         elif self.menu_state == MenuState.PROPS:
             instructions = ["=== PROPS ===", "1: Pookie Mode (Ribbon)", "0/ESC: Back"]
+            
+        elif self.menu_state == MenuState.CAMERA_SELECT:
+            instructions = ["=== CAMERAS ===", "1-0: Set Camera (Index 1-10)", "ESC: Back"]
 
         # Render instructions bottom-up
         y_start = h - 30
@@ -298,10 +304,11 @@ class ScreenManager:
             target_w, target_h = self.display_resolution
             display_frame = cv2.resize(display_frame, (target_w, target_h))
         
-        # display_frame = self._draw_fps_overlay(display_frame)
-        # display_frame = self._draw_debug_overlay(display_frame)
-        # display_frame = self._draw_instructions(display_frame)
-        # display_frame = self._draw_help_popup(display_frame)
+        if getattr(self, 'show_ui', False):
+            display_frame = self._draw_fps_overlay(display_frame)
+            display_frame = self._draw_debug_overlay(display_frame)
+            display_frame = self._draw_instructions(display_frame)
+            display_frame = self._draw_help_popup(display_frame)
         
         cv2.imshow(self.window_name, display_frame)
         
@@ -319,13 +326,18 @@ class ScreenManager:
             else:
                 return False
         elif key == ord('0'): 
-            self.menu_state = MenuState.MAIN
+            if self.menu_state == MenuState.CAMERA_SELECT:
+                self._last_key_result = 'set_cam_9'
+                self.menu_state = MenuState.MAIN
+            else:
+                self.menu_state = MenuState.MAIN
 
         # Menu Routing
         elif self.menu_state == MenuState.MAIN:
             if key == ord('1'): self.menu_state = MenuState.INTERACTIVE
             elif key == ord('2'): self.menu_state = MenuState.FILTERS
             elif key == ord('3'): self.menu_state = MenuState.PROPS
+            elif key in [ord('l'), ord('L')]: self.menu_state = MenuState.CAMERA_SELECT
             elif key == ord('c'): self.set_view_mode(ViewMode.WEBCAM_ONLY)
                 
         elif self.menu_state == MenuState.INTERACTIVE:
@@ -354,10 +366,17 @@ class ScreenManager:
             if key == ord('1'):
                 self._last_key_result = 'toggle_pookie'
                 self.menu_state = MenuState.MAIN
+                
+        elif self.menu_state == MenuState.CAMERA_SELECT:
+            if ord('1') <= key <= ord('9'):
+                cam_idx = key - ord('1')
+                self._last_key_result = f'set_cam_{cam_idx}'
+                self.menu_state = MenuState.MAIN
 
         # Global Utilities
         if key == ord('f'): self._toggle_fullscreen()
         elif key == ord('d'): self.show_debug = not self.show_debug
+        elif key == ord('u'): self.show_ui = not getattr(self, 'show_ui', False)
         elif key == ord(' '): 
             print("[ScreenManager] Paused - press any key to continue")
             cv2.waitKey(0)

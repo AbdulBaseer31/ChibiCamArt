@@ -2,7 +2,7 @@
 model_engine.py
 
 Core AI stylization engine using PyTorch with fp16 optimization.
-Implements fast neural style transfer for Chibi anime art generation.
+Implements fast neural style transfer for Art anime art generation.
 Optimized for RTX 4050 with 6GB VRAM constraints.
 """
 
@@ -185,7 +185,7 @@ class LightweightFaceStyleNet(nn.Module):
 
 class ArtGenerator:
     """
-    Real-time Chibi art style generator using Fast Neural Style Transfer.
+    Real-time Art art style generator using Fast Neural Style Transfer.
     
     This class manages the PyTorch model on CUDA with fp16 precision
     to fit within 6GB VRAM while maintaining real-time performance.
@@ -251,7 +251,7 @@ class ArtGenerator:
             self._load_weights(model_path)
         else:
             print("[ArtGenerator] Warning: No pretrained weights loaded. Using random init.")
-            print("[ArtGenerator] For Chibi style, download a pretrained FastNST model.")
+            print("[ArtGenerator] For Art style, download a pretrained FastNST model.")
         
         # Set model to evaluation mode (disables dropout/batch norm updates)
         self.model.eval()
@@ -451,7 +451,7 @@ class ArtGenerator:
         tracking_data: Optional[Any] = None
     ) -> np.ndarray:
         """
-        Generate stylized Chibi art from input frame.
+        Generate stylized Art art from input frame.
         
         This is the main inference method that:
         1. Preprocesses the input frame

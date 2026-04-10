@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from utils import resource_path
 
 # ==========================================
 # 1. DATA STRUCTURE
@@ -60,7 +61,7 @@ class SimpleEffectRenderer:
 
     def load_png_prop(self, filename, target_size=(300, 300)):
         """Generic PNG loader replacing the hardcoded trophy loader"""
-        png_path = os.path.join("props", filename)
+        png_path = resource_path(os.path.join("props", filename))
         if not os.path.exists(png_path):
             print(f"[Warning] Prop PNG not found at {png_path}!")
             return None
@@ -131,8 +132,8 @@ class SimpleEffectRenderer:
             
             try:
                 pygame.mixer.init()
-                self.snd_cheers = pygame.mixer.Sound(os.path.join("props", "Cheers.ogg"))
-                self.snd_boos = pygame.mixer.Sound(os.path.join("props", "Boos.ogg"))
+                self.snd_cheers = pygame.mixer.Sound(resource_path(os.path.join("props", "Cheers.ogg")))
+                self.snd_boos = pygame.mixer.Sound(resource_path(os.path.join("props", "Boos.ogg")))
             except Exception as e:
                 print(f"[Audio Error] Check if Cheers.ogg and Boos.ogg exist in the props folder: {e}")
                 
@@ -342,6 +343,9 @@ class PoseTracker:
         device: str = "cpu",
         **kwargs 
     ) -> None:
+        pose_model_path = resource_path(pose_model_path)
+        face_model_path = resource_path(face_model_path)
+        gesture_model_path = resource_path(gesture_model_path)
         
         running_mode = vision.RunningMode.VIDEO
         

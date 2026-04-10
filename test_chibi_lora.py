@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
+from utils import resource_path
 try:
     from diffusers import AutoPipelineForImage2Image, LCMScheduler
     from diffusers.utils import load_image
@@ -12,7 +13,7 @@ except ImportError:
     sys.exit(1)
 
 # Configuration
-LORA_PATH = "style05.safetensors"
+LORA_PATH = resource_path("style05.safetensors")
 # Assuming SD 1.5 base for most standard LoRAs, change to SDXL if needed
 BASE_MODEL = "runwayml/stable-diffusion-v1-5" 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,7 +22,7 @@ USE_LCM = True # Latent Consistency Models massively speed up CPU inference (fro
 class LightweightChibiPipeline:
     def __init__(self):
         print("Loading YOLOv8 for human tracking...")
-        self.yolo = YOLO('yolov8n.pt') 
+        self.yolo = YOLO(resource_path('yolov8n.pt')) 
         
         print(f"Loading Diffusion Pipeline on {DEVICE}...")
         # To make it lightweight, we use torch.float16 if on GPU, float32 on CPU
