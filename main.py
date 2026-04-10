@@ -29,7 +29,6 @@ def parse_arguments():
     parser.add_argument("--view-mode", "-v", choices=["webcam_only", "wireframe_only", "matrix_only", "glitch_only", "terminal_only", "hologram_only", "dot_field_only"], default="webcam_only")
     parser.add_argument("--debug", "-d", action="store_true")
     parser.add_argument("--fullscreen", "-f", action="store_true")
-    parser.add_argument("--gpu", "-g", action="store_true", help="Force CUDA GPU acceleration (use when PyTorch CUDA is installed system-wide)")
     return parser.parse_args()
 
 def select_camera():
@@ -79,7 +78,6 @@ async def async_main(args=None):
     
     display = ScreenManager(window_name="ArtCam", show_debug=args.debug, fullscreen=args.fullscreen)
     display.set_model_name("MediaPipe" if tracker_type == "mediapipe" else "YOLOv8m")
-    display.set_device(device)
     
     # Map view mode
     mode_map = {

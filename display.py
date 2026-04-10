@@ -143,7 +143,6 @@ class ScreenManager:
         debug_lines: List[str] = []
         
         debug_lines.append(f"Model: {self.model_name}")
-        debug_lines.append(f"Device: {self.device.upper()}")
         
         if self._frame_times:
             avg_ms = (sum(self._frame_times) / len(self._frame_times)) * 1000
@@ -272,9 +271,6 @@ class ScreenManager:
     
     def set_model_name(self, model_name: str) -> None:
         self.model_name = model_name
-    
-    def set_device(self, device: str) -> None:
-        self.device = device
     
     def set_view_mode(self, mode: ViewMode) -> None:
         self.view_mode = mode
