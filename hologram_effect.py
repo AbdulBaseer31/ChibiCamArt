@@ -714,10 +714,14 @@ class HologramEffect:
         br = (px + panel_w, py + panel_h)
 
         try:
-            sub   = target_img[tl[1]:br[1], tl[0]:br[0]]
-            target_img[tl[1]:br[1], tl[0]:br[0]] = cv2.add(sub, 0.15, glass, 0.95)
-        except Exception:
-            pass
+            sub = target_img[tl[1]:br[1], tl[0]:br[0]]
+            # Create a dark, slightly transparent background instead of the undefined 'glass'
+            bg_rect = np.zeros_like(sub)
+            bg_rect[:] = (20, 10, 5) # Dark tint
+            target_img[tl[1]:br[1], tl[0]:br[0]] = cv2.addWeighted(sub, 0.6, bg_rect, 0.4, 0)
+        except Exception as e:
+            print(f"UI Background Error: {e}")
+
 
         glow_b = np.zeros_like(target_img)
         cv2.rectangle(glow_b, tl, br, self.ui_color, 3)
@@ -767,9 +771,13 @@ class HologramEffect:
 
             if bg_color:
                 try:
-                    target_img[i_tl[1]:i_br[1], i_tl[0]:i_br[0]] = cv2.add(ovr, hl)
-                except Exception:
-                    pass
+                    item_sub = target_img[i_tl[1]:i_br[1], i_tl[0]:i_br[0]]
+                    color_rect = np.zeros_like(item_sub)
+                    color_rect[:] = bg_color
+                    # Blend the color over the existing image instead of undefined 'ovr'/'hl'
+                    target_img[i_tl[1]:i_br[1], i_tl[0]:i_br[0]] = cv2.addWeighted(item_sub, 0.5, color_rect, 0.5, 0)
+                except Exception as e:
+                    print(f"UI Item Highlight Error: {e}")
 
             cv2.rectangle(target_img, i_tl, i_br, self.ui_color, 1)
 
@@ -1194,8 +1202,6 @@ class HologramEffect:
 
         # ── 3. Mask toggle gesture (either hand) ─────────────────────────────────
         output = self._check_mask_toggle(output, left_lms, right_lms, face_lms, w, h)
-        if not self.mask_toggle_start:
-           output = self._check_mask_toggle(output, left_lms, right_lms, face_lms, w, h)
         # ── 4. ALWAYS draw the Visor (must be visible to see retract animation) ──
         output = self._draw_visor(output, face_lms, w, h)
 
