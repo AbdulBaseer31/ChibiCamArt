@@ -2,8 +2,10 @@ node_modules
 
 venv/
 
-_pycache_/
-
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 build/
 
 dist/
