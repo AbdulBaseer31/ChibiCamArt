@@ -1,5 +1,9 @@
 node_modules
 venv/
-_pycache_/
+__pycache__/
 build/
 dist/
+
+# Large files
+GCTC/AEP/Notes/A Textbook in Advanced Engineering Physics.pdf
+GCTC/AEP/Notes/Laser/LibreOffice_25.8.4_Win_x86-64.msi

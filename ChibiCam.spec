@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('yolo26m-pose.pt', '.'), ('yolov8m-pose.pt', '.'), ('yolov8n.pt', '.'), ('pose_landmarker_full.task', '.'), ('pose_landmarker_lite.task', '.'), ('style05.safetensors', '.')],
+    datas=[('yolo26m-pose.pt', '.'), ('yolov8m-pose.pt', '.'), ('yolov8n.pt', '.'), ('pose_landmarker_full.task', '.'), ('pose_landmarker_lite.task', '.'), ('face_landmarker.task', '.'), ('gesture_recognizer.task', '.'), ('style05.safetensors', '.'), ('props', 'props')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
